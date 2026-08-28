@@ -1,0 +1,30 @@
+#!/bin/sh
+# Browse the latest Claude sessions in a TUI and resume one in this terminal.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BINARY="$ROOT/bin/claude-sessions"
+
+if ! command -v go >/dev/null 2>&1 && [ ! -x "$BINARY" ]; then
+    echo "Go is required to build $BINARY" >&2
+    exit 1
+fi
+
+# Rebuild whenever a source file is newer than the binary.
+needs_build=0
+if [ ! -x "$BINARY" ]; then
+    needs_build=1
+else
+    for source in "$ROOT"/*.go "$ROOT/go.mod"; do
+        if [ -e "$source" ] && [ "$source" -nt "$BINARY" ]; then
+            needs_build=1
+        fi
+    done
+fi
+
+if [ "$needs_build" -eq 1 ]; then
+    (cd "$ROOT" && go build -o "$BINARY" .)
+fi
+
+# exec so the resumed session inherits this terminal directly.
+exec "$BINARY" "$@"
