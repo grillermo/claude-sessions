@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestFirstMessageSkipsBareCommandsAndReminders(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"an answer"}]}}`,
 	)
 
-	sessions, err := latestSessions(root, 20)
+	sessions, err := latestSessions(root, 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestSlashCommandWithArgumentsIsAFirstMessage(t *testing.T) {
 		`{"type":"user","message":{"content":"<command-name>/loop</command-name><command-args>5m ship it</command-args>"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20)
+	sessions, err := latestSessions(root, 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestMetaAndToolRecordsAreNotMessages(t *testing.T) {
 		`{"type":"user","message":{"content":"the only message"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20)
+	sessions, err := latestSessions(root, 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestCwdFallsBackToTheDirectoryName(t *testing.T) {
 		`{"type":"user","message":{"content":"hi"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20)
+	sessions, err := latestSessions(root, 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestLatestSessionsAreNewestFirstAndLimited(t *testing.T) {
 		}
 	}
 
-	sessions, err := latestSessions(root, 2)
+	sessions, err := latestSessions(root, 2, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +126,137 @@ func TestLatestSessionsAreNewestFirstAndLimited(t *testing.T) {
 	}
 	if sessions[0].ConvID != "new" || sessions[1].ConvID != "mid" {
 		t.Errorf("order = %q, %q", sessions[0].ConvID, sessions[1].ConvID)
+	}
+}
+
+// projects puts several transcripts on disk, one per project directory, and
+// returns the root they share.
+func projects(t *testing.T, dirs map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for dir, cwd := range dirs {
+		project := filepath.Join(root, dir)
+		if err := os.MkdirAll(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"type":"user","cwd":"` + cwd + `","message":{"content":"hi"}}` + "\n"
+		if err := os.WriteFile(filepath.Join(project, dir+".jsonl"), []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestADirectoryLimitsTheListToItselfAndItsSubpaths(t *testing.T) {
+	root := projects(t, map[string]string{
+		"-Users-me-c-datacenters":        "/Users/me/c/datacenters",
+		"-Users-me-c-datacenters-ui-kit": "/Users/me/c/datacenters/ui-kit",
+		"-Users-me-c-datacenters2":       "/Users/me/c/datacenters2",
+		"-Users-me-c-other":              "/Users/me/c/other",
+	})
+
+	within, err := newScope("/Users/me/c/datacenters/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := latestSessions(root, 20, within)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		got = append(got, s.Cwd)
+	}
+	sort.Strings(got)
+	want := []string{"/Users/me/c/datacenters", "/Users/me/c/datacenters/ui-kit"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("scoped sessions = %v, want %v", got, want)
+	}
+}
+
+// A dash in a directory name encodes the same way a separator does, so the
+// cheap directory match lets neighbours through and the recorded cwd has to
+// throw them out.
+func TestScopingRejectsPathsThatOnlyEncodeAlike(t *testing.T) {
+	root := projects(t, map[string]string{
+		"-Users-me-c-claude-sessions": "/Users/me/c/claude-sessions",
+	})
+
+	within, err := newScope("/Users/me/c/claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := latestSessions(root, 20, within)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("got %d sessions, want none: %v", len(sessions), sessions)
+	}
+}
+
+func TestScopeExpandsHomeAndRelativeDirectories(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	within, err := newScope("~/c/datacenters")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "c/datacenters"); within.path != want {
+		t.Errorf("scope path = %q, want %q", within.path, want)
+	}
+
+	relative, err := newScope(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative.path != cwd {
+		t.Errorf("scope path = %q, want %q", relative.path, cwd)
+	}
+}
+
+// The limit is meant to cap what is shown, not to hide a project's older
+// sessions behind newer ones from elsewhere.
+func TestScopingHappensBeforeTheLimit(t *testing.T) {
+	root := t.TempDir()
+	newer := filepath.Join(root, "-Users-me-c-other")
+	wanted := filepath.Join(root, "-Users-me-c-mine")
+	for _, dir := range []string{newer, wanted} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(dir, name, cwd string, age time.Duration) {
+		path := filepath.Join(dir, name+".jsonl")
+		line := `{"type":"user","cwd":"` + cwd + `","message":{"content":"hi"}}` + "\n"
+		if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Now().Add(-age)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(newer, "fresh", "/Users/me/c/other", time.Minute)
+	write(wanted, "stale", "/Users/me/c/mine", time.Hour)
+
+	within, err := newScope("/Users/me/c/mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := latestSessions(root, 1, within)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ConvID != "stale" {
+		t.Errorf("scoped sessions = %v, want the one in scope", sessions)
 	}
 }
 
@@ -186,7 +318,7 @@ func TestWrapLinesMarksTruncation(t *testing.T) {
 var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestSelectedRowIsFilledToTheScreenWidth(t *testing.T) {
-	m := newModel([]Session{{ConvID: "1", Cwd: "/a", First: "short", Last: "also short"}})
+	m := newModel([]Session{{ConvID: "1", Cwd: "/a", First: "short", Last: "also short"}}, scope{})
 	m.width = 100
 
 	for _, line := range strings.Split(strings.TrimRight(m.renderRow(m.sessions[0], true), "\n"), "\n") {
@@ -216,7 +348,7 @@ func TestEverySelectedStyleCarriesTheSelectionBackground(t *testing.T) {
 }
 
 func TestUnselectedRowHasNoSelectionBar(t *testing.T) {
-	m := newModel([]Session{{ConvID: "1", Cwd: "/a", First: "short", Last: "also short"}})
+	m := newModel([]Session{{ConvID: "1", Cwd: "/a", First: "short", Last: "also short"}}, scope{})
 	m.width = 100
 
 	if row := m.renderRow(m.sessions[0], false); strings.Contains(row, "▌") {
@@ -256,7 +388,7 @@ func previewModel() model {
 	m := newModel([]Session{
 		{ConvID: "1", Cwd: "/a", First: "the question", Last: "the answer"},
 		{ConvID: "2", Cwd: "/b", First: "another", Last: "reply"},
-	})
+	}, scope{})
 	m.width, m.height, m.viewport = 100, 30, 28
 	return m
 }
@@ -335,7 +467,7 @@ func TestFilterMatchesEitherMessageOrPath(t *testing.T) {
 	m := newModel([]Session{
 		{ConvID: "1", Cwd: "/a", First: "fix the parser", Last: "done"},
 		{ConvID: "2", Cwd: "/b/webapp", First: "hello", Last: "bye"},
-	})
+	}, scope{})
 
 	m.query = "PARSER"
 	m.applyFilter()

@@ -8,6 +8,17 @@ the one you pick in the terminal you launched it from.
 $ claude-sessions
 ```
 
+Give it a directory and the list holds only sessions that ran there or
+anywhere below it — a whole tree of repos, or one of them:
+
+```
+$ claude-sessions ~/c/datacenters/
+```
+
+The directory is scoped out before the newest-40 cut, so you get that
+project's newest sessions rather than whatever of it survived a global one.
+The title line names the directory the list is limited to.
+
 ## The list
 
 Each row is one session: the project it ran in and its age, then two columns —

@@ -67,6 +67,55 @@ func dirToPath(dirname string) string {
 	return strings.ReplaceAll(s, "-", "/")
 }
 
+// pathToDir encodes a filesystem path the way Claude Code names its project
+// directories: separators and dots both become dashes. The encoding is lossy —
+// a dash in the path is indistinguishable from a separator — which is why a
+// scope match is confirmed against the session's real cwd later on.
+func pathToDir(path string) string {
+	return strings.NewReplacer("/", "-", ".", "-").Replace(path)
+}
+
+// scope is a directory the listing is limited to: the sessions run there and
+// anywhere below it. The zero value matches everything.
+type scope struct {
+	path string // absolute, cleaned; "" for no limit
+	dir  string // that path in project-directory form
+}
+
+// newScope resolves a user-supplied directory, expanding a leading `~` and
+// making it absolute, so it can be compared with the paths in transcripts.
+func newScope(arg string) (scope, error) {
+	if strings.TrimSpace(arg) == "" {
+		return scope{}, nil
+	}
+	path := arg
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return scope{}, err
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path[1:], "/"))
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return scope{}, err
+	}
+	path = filepath.Clean(path)
+	return scope{path: path, dir: pathToDir(path)}, nil
+}
+
+// coversDir is the cheap test, run on a project directory name before its
+// transcripts are read. It can say yes to a path that only encodes the same
+// way, which coversPath then rejects.
+func (s scope) coversDir(dirname string) bool {
+	return s.dir == "" || dirname == s.dir || strings.HasPrefix(dirname, s.dir+"-")
+}
+
+// coversPath reports whether a directory is the scope or sits under it.
+func (s scope) coversPath(path string) bool {
+	return s.path == "" || path == s.path || strings.HasPrefix(path, s.path+string(filepath.Separator))
+}
+
 // commandText renders a slash-command envelope as the command line the user
 // typed, and leaves anything else unchanged.
 func commandText(text string) string {
@@ -189,8 +238,11 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// latestSessions returns the most recently touched sessions, newest first.
-func latestSessions(root string, limit int) ([]Session, error) {
+// latestSessions returns the most recently touched sessions, newest first,
+// limited to the given scope. Scoping happens before the limit, so asking for
+// one project gives that project's newest sessions rather than whatever of it
+// survived a global cut.
+func latestSessions(root string, limit int, within scope) ([]Session, error) {
 	transcripts, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
 	if err != nil {
 		return nil, err
@@ -209,6 +261,9 @@ func latestSessions(root string, limit int) ([]Session, error) {
 			continue
 		}
 		name := filepath.Base(path)
+		if !within.coversDir(filepath.Base(filepath.Dir(path))) {
+			continue
+		}
 		entries = append(entries, entry{
 			path:  path,
 			id:    strings.TrimSuffix(name, ".jsonl"),
@@ -234,8 +289,13 @@ func latestSessions(root string, limit int) ([]Session, error) {
 		if err != nil {
 			continue
 		}
+		// The directory name only encodes the path, so a recorded cwd has the
+		// final say on whether the session really is inside the scope. Without
+		// one the encoded match is all there is.
 		if cwd == "" {
 			cwd = dirToPath(e.dir)
+		} else if !within.coversPath(cwd) {
+			continue
 		}
 		sessions = append(sessions, Session{
 			ConvID: e.id,

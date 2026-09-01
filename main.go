@@ -69,12 +69,15 @@ type model struct {
 	searching bool
 	// preview is the full-screen view of the selected session.
 	preview bool
+	// scope is the directory the list was limited to, shown in the title so it
+	// is clear the list is not everything.
+	scope scope
 	// chosen is the session Enter picked, resumed after the TUI shuts down.
 	chosen *Session
 }
 
-func newModel(sessions []Session) model {
-	m := model{sessions: sessions, now: time.Now(), width: 80, height: 24}
+func newModel(sessions []Session, within scope) model {
+	m := model{sessions: sessions, scope: within, now: time.Now(), width: 80, height: 24}
 	m.applyFilter()
 	return m
 }
@@ -332,6 +335,9 @@ func (m model) previewView(s Session) string {
 func (m model) titleLine() string {
 	count := fmt.Sprintf("%d/%d sessions", len(m.filtered), len(m.sessions))
 	title := headerStyle.Render("Claude sessions") + "  " + ageStyle.Render(count)
+	if m.scope.path != "" {
+		title += "  " + pathStyle.Render("in "+m.scope.path)
+	}
 	if m.query != "" || m.searching {
 		title += "  " + searchStyle.Render("/"+m.query+cursorMark(m.searching))
 	}
@@ -535,17 +541,39 @@ func main() {
 		}
 	}
 
-	sessions, err := latestSessions(root, sessionLimit)
+	// The one optional argument is a directory: only sessions run there or
+	// below it are listed.
+	var arg string
+	if args := os.Args[1:]; len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "usage: claude-sessions [directory]")
+		os.Exit(1)
+	} else if len(args) == 1 {
+		if arg = args[0]; strings.HasPrefix(arg, "-") {
+			fmt.Println("usage: claude-sessions [directory]")
+			os.Exit(0)
+		}
+	}
+	within, err := newScope(arg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
+		os.Exit(1)
+	}
+
+	sessions, err := latestSessions(root, sessionLimit, within)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
 		os.Exit(1)
 	}
 	if len(sessions) == 0 {
-		fmt.Fprintln(os.Stderr, "claude-sessions: no Claude sessions found in "+root)
+		where := root
+		if within.path != "" {
+			where = within.path
+		}
+		fmt.Fprintln(os.Stderr, "claude-sessions: no Claude sessions found in "+where)
 		os.Exit(1)
 	}
 
-	program := tea.NewProgram(newModel(sessions), tea.WithAltScreen())
+	program := tea.NewProgram(newModel(sessions, within), tea.WithAltScreen())
 	finished, err := program.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
