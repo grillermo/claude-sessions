@@ -136,6 +136,26 @@ func TestResumeCommandQuotesPaths(t *testing.T) {
 	}
 }
 
+func TestReportCwdWritesTheDirectoryForTheShellFunction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cwd")
+	t.Setenv(cwdFileEnv, path)
+
+	reportCwd("/tmp/it's here")
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading reported cwd: %v", err)
+	}
+	if string(got) != "/tmp/it's here\n" {
+		t.Errorf("reported cwd = %q", got)
+	}
+}
+
+func TestReportCwdIsANoOpWithoutTheShellFunction(t *testing.T) {
+	t.Setenv(cwdFileEnv, "")
+	reportCwd("/tmp/anywhere") // Must not panic or write anything.
+}
+
 func TestWrapLinesFillsExactlyTheRequestedHeight(t *testing.T) {
 	lines := wrapLines("a short one", 20, 3)
 	if len(lines) != 3 {

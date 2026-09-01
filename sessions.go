@@ -168,6 +168,22 @@ func resumeCommand(s Session) string {
 	return fmt.Sprintf("cd %s && claude --resume %s", shellQuote(s.Cwd), shellQuote(s.ConvID))
 }
 
+// cwdFileEnv names the file a wrapping shell function asks us to write the
+// chosen session's directory into. A child process cannot change its parent
+// shell's directory, so the function reads the file back and cds there itself.
+const cwdFileEnv = "CLAUDE_SESSIONS_CWD_FILE"
+
+// reportCwd tells the wrapping shell function where the session lives. It is
+// best-effort: without the wrapper there is no file to write, and a failed
+// write must not stop the session from resuming.
+func reportCwd(cwd string) {
+	path := os.Getenv(cwdFileEnv)
+	if path == "" {
+		return
+	}
+	os.WriteFile(path, []byte(cwd+"\n"), 0o600)
+}
+
 // shellQuote wraps a value so a POSIX shell reads it as one literal word.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"

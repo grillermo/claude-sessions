@@ -557,6 +557,11 @@ func main() {
 		return
 	}
 
+	// Report the directory before exec'ing: after exec there is no more of this
+	// process left to run, and the shell function needs the answer regardless of
+	// how the session ends.
+	reportCwd(final.chosen.Cwd)
+
 	// Hand the terminal over to Claude: exec replaces this process, so the
 	// session runs where the TUI was, with no shell wrapper left behind.
 	command := resumeCommand(*final.chosen)

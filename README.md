@@ -39,6 +39,22 @@ what the session was about.
 `enter` execs `cd <project> && claude --resume <id>` over the TUI's own
 process, so the session takes over the terminal with no wrapper left behind.
 
+## Staying in the session's directory
+
+That `cd` happens in a child of your shell, so on its own it dies with the
+session: quit Claude and you are back where you typed `claude-sessions`. To
+land in the project instead, source the shell function and use that:
+
+```sh
+source ~/c/claude-sessions/claude-sessions.sh
+```
+
+It hands the binary a scratch file through `CLAUDE_SESSIONS_CWD_FILE`, the
+binary writes the chosen project path there before exec'ing Claude, and the
+function `cd`s your real shell there once the session ends. Quitting the TUI
+without picking anything leaves you where you were, and Claude's exit status
+still comes through. Without the function the binary works exactly as before.
+
 ## Running it
 
 The `claude-sessions` script builds the binary into `bin/` on first run and
