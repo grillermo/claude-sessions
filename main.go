@@ -32,21 +32,23 @@ const (
 var selectionBg = lipgloss.Color("62")
 
 var (
-	plainStyle  = lipgloss.NewStyle()
-	headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	pathStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	ageStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	firstStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	lastStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	plainStyle   = lipgloss.NewStyle()
+	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	ageStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	firstStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	lastStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	accountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 
 	// Every selected style shares the background: segments are rendered one
 	// after another, so each has to paint its own stretch of the row.
-	selectedRow   = lipgloss.NewStyle().Background(selectionBg)
-	selectedBar   = selectedRow.Foreground(lipgloss.Color("213")).Bold(true)
-	selectedPath  = selectedRow.Foreground(lipgloss.Color("231")).Bold(true)
-	selectedAge   = selectedRow.Foreground(lipgloss.Color("189"))
-	selectedFirst = selectedRow.Foreground(lipgloss.Color("231"))
-	selectedLast  = selectedRow.Foreground(lipgloss.Color("252"))
+	selectedRow     = lipgloss.NewStyle().Background(selectionBg)
+	selectedBar     = selectedRow.Foreground(lipgloss.Color("213")).Bold(true)
+	selectedPath    = selectedRow.Foreground(lipgloss.Color("231")).Bold(true)
+	selectedAge     = selectedRow.Foreground(lipgloss.Color("189"))
+	selectedFirst   = selectedRow.Foreground(lipgloss.Color("231"))
+	selectedLast    = selectedRow.Foreground(lipgloss.Color("252"))
+	selectedAccount = selectedRow.Foreground(lipgloss.Color("219"))
 
 	labelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	footerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
@@ -91,7 +93,7 @@ func (m *model) applyFilter() {
 	} else {
 		matched := make([]Session, 0, len(m.sessions))
 		for _, s := range m.sessions {
-			haystack := strings.ToLower(s.First + "\n" + s.Last + "\n" + s.Cwd)
+			haystack := strings.ToLower(s.First + "\n" + s.Last + "\n" + s.Cwd + "\n" + s.Account.label())
 			if strings.Contains(haystack, query) {
 				matched = append(matched, s)
 			}
@@ -315,8 +317,11 @@ func (m model) previewView(s Session) string {
 	gap := strings.Repeat(" ", columnGap)
 
 	var b strings.Builder
-	head := pathStyle.Render(truncate(s.Cwd, m.width-24)) + "  " +
-		ageStyle.Render(timeAgo(m.now.Sub(s.MTime)))
+	head := pathStyle.Render(truncate(s.Cwd, m.width-24))
+	if account := s.Account.label(); account != "" {
+		head += "  " + accountStyle.Render(account)
+	}
+	head += "  " + ageStyle.Render(timeAgo(m.now.Sub(s.MTime)))
 	// The filter stays live behind the preview, so it stays on screen too.
 	if m.query != "" || m.searching {
 		head += "  " + searchStyle.Render("/"+m.query+cursorMark(m.searching))
@@ -385,12 +390,7 @@ func (m model) renderRow(s Session, selected bool) string {
 	gap := strings.Repeat(" ", columnGap)
 
 	var b strings.Builder
-	b.WriteString(m.renderLine(selected,
-		m.gutter(selected),
-		segment{truncate(s.Cwd, bodyWidth-14), pathStyle, selectedPath},
-		segment{"  ", plainStyle, selectedRow},
-		segment{timeAgo(m.now.Sub(s.MTime)), ageStyle, selectedAge},
-	))
+	b.WriteString(m.renderLine(selected, m.headerSegments(s, bodyWidth, selected)...))
 	for i := 0; i < messageLines; i++ {
 		b.WriteString(m.renderLine(selected,
 			m.gutter(selected),
@@ -400,6 +400,30 @@ func (m model) renderRow(s Session, selected bool) string {
 		))
 	}
 	return b.String()
+}
+
+// headerSegments is a row's first line: where the session ran, which account it
+// belongs to, and how long ago it was touched. The path gives way to the other
+// two, since they are short and neither survives being cut.
+func (m model) headerSegments(s Session, width int, selected bool) []segment {
+	account := s.Account.label()
+	room := width - 14
+	if account != "" {
+		room -= len([]rune(account)) + 2
+	}
+
+	segments := []segment{
+		m.gutter(selected),
+		{truncate(s.Cwd, room), pathStyle, selectedPath},
+	}
+	if account != "" {
+		segments = append(segments,
+			segment{"  ", plainStyle, selectedRow},
+			segment{account, accountStyle, selectedAccount})
+	}
+	return append(segments,
+		segment{"  ", plainStyle, selectedRow},
+		segment{timeAgo(m.now.Sub(s.MTime)), ageStyle, selectedAge})
 }
 
 // renderLine styles one line's segments and pads it to the full screen width,
@@ -531,14 +555,24 @@ func pad(text string, width int) string {
 	return text
 }
 
+// projectSources is where transcripts are read from: the one directory named
+// by CLAUDE_PROJECTS_DIR when it is set, and otherwise every account's.
+func projectSources() ([]source, error) {
+	if root := os.Getenv("CLAUDE_PROJECTS_DIR"); root != "" {
+		return []source{{root: root}}, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return discoverSources(home), nil
+}
+
 func main() {
-	root := os.Getenv("CLAUDE_PROJECTS_DIR")
-	if root == "" {
-		var err error
-		if root, err = defaultRoot(); err != nil {
-			fmt.Fprintln(os.Stderr, "claude-sessions:", err)
-			os.Exit(1)
-		}
+	sources, err := projectSources()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
+		os.Exit(1)
 	}
 
 	// The one optional argument is a directory: only sessions run there or
@@ -559,17 +593,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	sessions, err := latestSessions(root, sessionLimit, within)
+	sessions, err := latestSessions(sources, sessionLimit, within)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
 		os.Exit(1)
 	}
 	if len(sessions) == 0 {
-		where := root
+		missing := "claude-sessions: no Claude sessions found"
 		if within.path != "" {
-			where = within.path
+			missing += " in " + within.path
 		}
-		fmt.Fprintln(os.Stderr, "claude-sessions: no Claude sessions found in "+where)
+		fmt.Fprintln(os.Stderr, missing)
 		os.Exit(1)
 	}
 

@@ -1,8 +1,9 @@
 # claude-sessions
 
-A terminal UI over your recent Claude Code sessions. It lists the latest
-transcripts, shows what each one started with and where it got to, and resumes
-the one you pick in the terminal you launched it from.
+A terminal UI over your recent Claude Code sessions, across every account you
+are logged in to. It lists the latest transcripts, shows what each one started
+with and where it got to, and resumes the one you pick — as the account it
+belongs to — in the terminal you launched it from.
 
 ```
 $ claude-sessions
@@ -19,9 +20,23 @@ The directory is scoped out before the newest-40 cut, so you get that
 project's newest sessions rather than whatever of it survived a global one.
 The title line names the directory the list is limited to.
 
+## Accounts
+
+[claude-swap](https://github.com/grillermo/claude-swap) gives every logged-in
+account its own configuration directory, so from inside one account the other
+accounts' sessions do not exist. The list reads all of them — every
+`~/.claude-swap-backup/sessions/<slot>-<email>/projects`, plus the plain
+`~/.claude/projects` that predates the swapping — and merges them into one
+timeline, newest first, rather than a run of each account.
+
+A row belonging to an account is labelled with its address next to the project
+path, and the filter matches that too, so `/work.com` narrows the list to one
+account. Rows with no label are the unmanaged `~/.claude`.
+
 ## The list
 
-Each row is one session: the project it ran in and its age, then two columns —
+Each row is one session: the project it ran in, the account it belongs to, and
+its age, then two columns —
 the first message you typed on the left, the last message of the conversation
 on the right. Rows are three lines tall, so a screenful holds many sessions.
 
@@ -50,6 +65,12 @@ what the session was about.
 `enter` execs `cd <project> && claude --resume <id>` over the TUI's own
 process, so the session takes over the terminal with no wrapper left behind.
 
+A session belonging to a claude-swap account is resumed through
+`cswap run <slot> -- --resume <id>` instead, which points Claude at that
+account's configuration and credentials for that terminal only. Plain
+`claude --resume` would look for the transcript under whichever account is
+current and not find it.
+
 ## Staying in the session's directory
 
 That `cd` happens in a child of your shell, so on its own it dies with the
@@ -76,8 +97,9 @@ for nothing else afterwards. Put the repo on your `PATH`:
 export PATH="$HOME/c/claude-sessions:$PATH"
 ```
 
-Transcripts are read from `~/.claude/projects`; `CLAUDE_PROJECTS_DIR`
-overrides that.
+Transcripts are read from every account's projects directory, as above.
+`CLAUDE_PROJECTS_DIR` overrides all of that with one directory, and sessions
+found there are resumed with plain `claude --resume`.
 
 ## Tests
 

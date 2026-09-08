@@ -1,10 +1,11 @@
 // Reading Claude Code transcripts, the same way the Python backend does.
 //
-// Transcripts live in ~/.claude/projects/<encoded-cwd>/<id>.jsonl, one JSON
-// record per line. A session's first message is the first thing the user
-// actually typed that is not an argument-less slash command; its last message
-// is the last prose from either side. Tool calls, tool results, thinking
-// blocks, and system reminders are never messages.
+// Transcripts live in <config>/projects/<encoded-cwd>/<id>.jsonl, one JSON
+// record per line, under every account's configuration directory. A session's
+// first message is the first thing the user actually typed that is not an
+// argument-less slash command; its last message is the last prose from either
+// side. Tool calls, tool results, thinking blocks, and system reminders are
+// never messages.
 package main
 
 import (
@@ -28,11 +29,12 @@ var (
 
 // Session is one transcript, reduced to what the list needs to show.
 type Session struct {
-	ConvID string
-	Cwd    string
-	MTime  time.Time
-	First  string
-	Last   string
+	ConvID  string
+	Cwd     string
+	MTime   time.Time
+	First   string
+	Last    string
+	Account account
 }
 
 // record is the slice of a transcript line we care about.
@@ -49,15 +51,6 @@ type record struct {
 type contentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
-}
-
-// defaultRoot returns where Claude Code keeps its per-project transcripts.
-func defaultRoot() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude", "projects"), nil
 }
 
 // dirToPath converts a Claude project directory name back to a filesystem path.
@@ -212,9 +205,17 @@ func readSession(transcript string) (first, last, cwd string, err error) {
 	return first, last, cwd, nil
 }
 
-// resumeCommand returns the shell command that resumes a session.
+// resumeCommand returns the shell command that resumes a session. A session
+// belonging to a claude-swap account is resumed through `cswap run`, which
+// points Claude at that account's configuration and credentials for this
+// terminal only: plain `claude --resume` would look for the transcript under
+// whichever account happens to be current and not find it.
 func resumeCommand(s Session) string {
-	return fmt.Sprintf("cd %s && claude --resume %s", shellQuote(s.Cwd), shellQuote(s.ConvID))
+	launch := fmt.Sprintf("claude --resume %s", shellQuote(s.ConvID))
+	if s.Account.number != 0 {
+		launch = fmt.Sprintf("cswap run %d -- --resume %s", s.Account.number, shellQuote(s.ConvID))
+	}
+	return fmt.Sprintf("cd %s && %s", shellQuote(s.Cwd), launch)
 }
 
 // cwdFileEnv names the file a wrapping shell function asks us to write the
@@ -238,38 +239,43 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// latestSessions returns the most recently touched sessions, newest first,
-// limited to the given scope. Scoping happens before the limit, so asking for
-// one project gives that project's newest sessions rather than whatever of it
-// survived a global cut.
-func latestSessions(root string, limit int, within scope) ([]Session, error) {
-	transcripts, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
-	if err != nil {
-		return nil, err
-	}
-
+// latestSessions returns the most recently touched sessions across every
+// source, newest first, limited to the given scope. Sources are merged before
+// the sort, so the list is one timeline over all the accounts rather than a
+// run of each. Scoping happens before the limit, so asking for one project
+// gives that project's newest sessions rather than whatever of it survived a
+// global cut.
+func latestSessions(sources []source, limit int, within scope) ([]Session, error) {
 	type entry struct {
-		path  string
-		id    string
-		dir   string
-		mtime time.Time
+		path    string
+		id      string
+		dir     string
+		mtime   time.Time
+		account account
 	}
 	var entries []entry
-	for _, path := range transcripts {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
+	for _, src := range sources {
+		transcripts, err := filepath.Glob(filepath.Join(src.root, "*", "*.jsonl"))
+		if err != nil {
+			return nil, err
 		}
-		name := filepath.Base(path)
-		if !within.coversDir(filepath.Base(filepath.Dir(path))) {
-			continue
+		for _, path := range transcripts {
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			name := filepath.Base(path)
+			if !within.coversDir(filepath.Base(filepath.Dir(path))) {
+				continue
+			}
+			entries = append(entries, entry{
+				path:    path,
+				id:      strings.TrimSuffix(name, ".jsonl"),
+				dir:     filepath.Base(filepath.Dir(path)),
+				mtime:   info.ModTime(),
+				account: src.account,
+			})
 		}
-		entries = append(entries, entry{
-			path:  path,
-			id:    strings.TrimSuffix(name, ".jsonl"),
-			dir:   filepath.Base(filepath.Dir(path)),
-			mtime: info.ModTime(),
-		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].mtime.Equal(entries[j].mtime) {
@@ -298,11 +304,12 @@ func latestSessions(root string, limit int, within scope) ([]Session, error) {
 			continue
 		}
 		sessions = append(sessions, Session{
-			ConvID: e.id,
-			Cwd:    cwd,
-			MTime:  e.mtime,
-			First:  first,
-			Last:   last,
+			ConvID:  e.id,
+			Cwd:     cwd,
+			MTime:   e.mtime,
+			First:   first,
+			Last:    last,
+			Account: e.account,
 		})
 	}
 	return sessions, nil

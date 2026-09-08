@@ -13,6 +13,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// local is one unmanaged projects directory, which is what a machine without
+// claude-swap has and what most of these tests care about.
+func local(root string) []source {
+	return []source{{root: root}}
+}
+
 // writeTranscript puts a transcript on disk and returns the projects root.
 func writeTranscript(t *testing.T, dir, name string, lines ...string) string {
 	t.Helper()
@@ -35,7 +41,7 @@ func TestFirstMessageSkipsBareCommandsAndReminders(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"an answer"}]}}`,
 	)
 
-	sessions, err := latestSessions(root, 20, scope{})
+	sessions, err := latestSessions(local(root), 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +64,7 @@ func TestSlashCommandWithArgumentsIsAFirstMessage(t *testing.T) {
 		`{"type":"user","message":{"content":"<command-name>/loop</command-name><command-args>5m ship it</command-args>"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20, scope{})
+	sessions, err := latestSessions(local(root), 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +81,7 @@ func TestMetaAndToolRecordsAreNotMessages(t *testing.T) {
 		`{"type":"user","message":{"content":"the only message"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20, scope{})
+	sessions, err := latestSessions(local(root), 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +95,7 @@ func TestCwdFallsBackToTheDirectoryName(t *testing.T) {
 		`{"type":"user","message":{"content":"hi"}}`,
 	)
 
-	sessions, err := latestSessions(root, 20, scope{})
+	sessions, err := latestSessions(local(root), 20, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +123,7 @@ func TestLatestSessionsAreNewestFirstAndLimited(t *testing.T) {
 		}
 	}
 
-	sessions, err := latestSessions(root, 2, scope{})
+	sessions, err := latestSessions(local(root), 2, scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +165,7 @@ func TestADirectoryLimitsTheListToItselfAndItsSubpaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := latestSessions(root, 20, within)
+	sessions, err := latestSessions(local(root), 20, within)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +193,7 @@ func TestScopingRejectsPathsThatOnlyEncodeAlike(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := latestSessions(root, 20, within)
+	sessions, err := latestSessions(local(root), 20, within)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +257,7 @@ func TestScopingHappensBeforeTheLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := latestSessions(root, 1, within)
+	sessions, err := latestSessions(local(root), 1, within)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,12 +339,13 @@ func TestSelectedRowIsFilledToTheScreenWidth(t *testing.T) {
 // the background would punch a hole in the highlighted row.
 func TestEverySelectedStyleCarriesTheSelectionBackground(t *testing.T) {
 	styles := map[string]lipgloss.Style{
-		"row":   selectedRow,
-		"bar":   selectedBar,
-		"path":  selectedPath,
-		"age":   selectedAge,
-		"first": selectedFirst,
-		"last":  selectedLast,
+		"row":     selectedRow,
+		"bar":     selectedBar,
+		"path":    selectedPath,
+		"age":     selectedAge,
+		"first":   selectedFirst,
+		"last":    selectedLast,
+		"account": selectedAccount,
 	}
 	for name, style := range styles {
 		if style.GetBackground() != selectionBg {
