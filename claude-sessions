@@ -2,7 +2,10 @@
 # Browse the latest Claude sessions in a TUI and resume one in this terminal.
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Run through a symlink (zsh/programs.zsh links it into PATH): follow it back to the repo.
+SELF=$0
+while [ -L "$SELF" ]; do SELF=$(readlink "$SELF"); done
+ROOT=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 BINARY="$ROOT/bin/claude-sessions"
 
 if ! command -v go >/dev/null 2>&1 && [ ! -x "$BINARY" ]; then
