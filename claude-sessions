@@ -6,7 +6,28 @@ set -eu
 SELF=$0
 while [ -L "$SELF" ]; do SELF=$(readlink "$SELF"); done
 ROOT=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
-BINARY="$ROOT/bin/claude-sessions"
+
+# --- platform: build for this machine's real OS and CPU ------------------
+case "$(uname -s)" in
+  Darwin) GOOS=darwin ;;
+  Linux)  GOOS=linux ;;
+  *) echo "unsupported OS: $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) GOARCH=arm64 ;;
+  x86_64|amd64)  GOARCH=amd64 ;;
+  *) echo "unsupported CPU: $(uname -m)" >&2; exit 1 ;;
+esac
+# A shell under Rosetta reports x86_64 on Apple Silicon; build for the real CPU.
+if [ "$GOOS" = darwin ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+  GOARCH=arm64
+fi
+export GOOS GOARCH CGO_ENABLED=0     # no program here uses cgo
+# -------------------------------------------------------------------------
+
+# One binary per platform in bin/, so a build from another machine is never
+# mistaken for this one's: it simply has a different name.
+BINARY="$ROOT/bin/claude-sessions-$GOOS-$GOARCH"
 
 if ! command -v go >/dev/null 2>&1 && [ ! -x "$BINARY" ]; then
     echo "Go is required to build $BINARY" >&2
@@ -26,7 +47,7 @@ else
 fi
 
 if [ "$needs_build" -eq 1 ]; then
-    (cd "$ROOT" && go build -o "$BINARY" .)
+    (cd "$ROOT" && go build -trimpath -o "$BINARY" . && ln -sfn "claude-sessions-$GOOS-$GOARCH" bin/claude-sessions)
 fi
 
 # exec so the resumed session inherits this terminal directly.
