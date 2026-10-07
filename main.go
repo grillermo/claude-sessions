@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -74,6 +75,9 @@ type model struct {
 	// scope is the directory the list was limited to, shown in the title so it
 	// is clear the list is not everything.
 	scope scope
+	// pending are transcripts not read yet; they stream in batch by batch so
+	// the list is usable before the last one is parsed.
+	pending []transcript
 	// chosen is the session Enter picked, resumed after the TUI shuts down.
 	chosen *Session
 }
@@ -82,6 +86,37 @@ func newModel(sessions []Session, within scope) model {
 	m := model{sessions: sessions, scope: within, now: time.Now(), width: 80, height: 24}
 	m.applyFilter()
 	return m
+}
+
+// prefillSearch opens search mode with the query already typed.
+func (m *model) prefillSearch(query string) {
+	m.query = query
+	m.searching = query != ""
+	m.applyFilter()
+}
+
+// cwdName is the basename of the current directory, or "" when it is unknown
+// or has no useful name (the filesystem root).
+func cwdName() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	name := filepath.Base(dir)
+	if name == "/" || name == "." {
+		return ""
+	}
+	return name
+}
+
+// dropLastWord removes the trailing word and the spaces after it, the way
+// Ctrl+W does in a terminal.
+func dropLastWord(s string) string {
+	s = strings.TrimRight(s, " \t")
+	if i := strings.LastIndexAny(s, " \t"); i >= 0 {
+		return s[:i+1]
+	}
+	return ""
 }
 
 // applyFilter narrows the list to sessions matching the query and keeps the
@@ -132,8 +167,34 @@ func (m model) visibleRows() int {
 	return rows
 }
 
+// loadBatch is how many transcripts are read between redraws.
+const loadBatch = 25
+
+// batchMsg carries the sessions read from the front of the pending transcripts.
+type batchMsg struct {
+	sessions []Session
+	rest     []transcript
+}
+
+// loadNext reads the next batch of pending transcripts off the UI thread.
+func loadNext(pending []transcript, within scope) tea.Cmd {
+	if len(pending) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		n := min(loadBatch, len(pending))
+		var sessions []Session
+		for _, e := range pending[:n] {
+			if session, ok := readTranscript(e, within); ok {
+				sessions = append(sessions, session)
+			}
+		}
+		return batchMsg{sessions: sessions, rest: pending[n:]}
+	}
+}
+
 func (m model) Init() tea.Cmd {
-	return nil
+	return loadNext(m.pending, m.scope)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -147,6 +208,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.scrollIntoView()
 		return m, nil
+
+	case batchMsg:
+		m.sessions = append(m.sessions, msg.sessions...)
+		m.pending = msg.rest
+		m.applyFilter()
+		return m, loadNext(m.pending, m.scope)
 
 	case tea.KeyMsg:
 		if m.searching {
@@ -174,6 +241,10 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.query = string(runes[:len(runes)-1])
 			m.applyFilter()
 		}
+		return m, nil
+	case tea.KeyCtrlW:
+		m.query = dropLastWord(m.query)
+		m.applyFilter()
 		return m, nil
 	case tea.KeyCtrlC:
 		return m, tea.Quit
@@ -339,6 +410,9 @@ func (m model) previewView(s Session) string {
 
 func (m model) titleLine() string {
 	count := fmt.Sprintf("%d/%d sessions", len(m.filtered), len(m.sessions))
+	if len(m.pending) > 0 {
+		count += fmt.Sprintf(" · loading %d more…", len(m.pending))
+	}
 	title := headerStyle.Render("Claude sessions") + "  " + ageStyle.Render(count)
 	if m.scope.path != "" {
 		title += "  " + pathStyle.Render("in "+m.scope.path)
@@ -593,12 +667,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	sessions, err := latestSessions(sources, sessionLimit, within)
+	pending, err := listTranscripts(sources, 0, within)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
 		os.Exit(1)
 	}
-	if len(sessions) == 0 {
+	if len(pending) == 0 {
 		missing := "claude-sessions: no Claude sessions found"
 		if within.path != "" {
 			missing += " in " + within.path
@@ -607,7 +681,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	program := tea.NewProgram(newModel(sessions, within), tea.WithAltScreen())
+	m := newModel(nil, within)
+	m.pending = pending
+	if arg == "" {
+		m.prefillSearch(cwdName())
+	}
+	program := tea.NewProgram(m, tea.WithAltScreen())
 	finished, err := program.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)

@@ -494,3 +494,38 @@ func TestFilterMatchesEitherMessageOrPath(t *testing.T) {
 		t.Errorf("empty filter left %d sessions, cursor %d", len(m.filtered), m.cursor)
 	}
 }
+
+func TestSessionsStreamInBatchesInOrder(t *testing.T) {
+	root := writeTranscript(t, "-Users-me-proj", "a",
+		`{"type":"user","cwd":"/Users/me/proj","message":{"content":"one"}}`)
+	pending, err := listTranscripts(local(root), 0, scope{})
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("listTranscripts = %v, %v", pending, err)
+	}
+	m := newModel(nil, scope{})
+	m.pending = pending
+
+	msg := m.Init()()
+	next, cmd := m.Update(msg)
+	got := next.(model)
+	if len(got.sessions) != 1 || len(got.filtered) != 1 || len(got.pending) != 0 {
+		t.Fatalf("after batch: %d sessions, %d shown, %d pending", len(got.sessions), len(got.filtered), len(got.pending))
+	}
+	if cmd != nil {
+		t.Fatal("nothing left to load, so no further command is expected")
+	}
+}
+
+func TestDropLastWordLikeATerminal(t *testing.T) {
+	for in, want := range map[string]string{
+		"foo bar":   "foo ",
+		"foo bar  ": "foo ",
+		"foo":       "",
+		"":          "",
+		"  ":        "",
+	} {
+		if got := dropLastWord(in); got != want {
+			t.Errorf("dropLastWord(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

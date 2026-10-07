@@ -239,27 +239,30 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// latestSessions returns the most recently touched sessions across every
-// source, newest first, limited to the given scope. Sources are merged before
-// the sort, so the list is one timeline over all the accounts rather than a
-// run of each. Scoping happens before the limit, so asking for one project
-// gives that project's newest sessions rather than whatever of it survived a
-// global cut.
-func latestSessions(sources []source, limit int, within scope) ([]Session, error) {
-	type entry struct {
-		path    string
-		id      string
-		dir     string
-		mtime   time.Time
-		account account
-	}
-	var entries []entry
+// transcript is a session file found on disk, not yet read.
+type transcript struct {
+	path    string
+	id      string
+	dir     string
+	mtime   time.Time
+	account account
+}
+
+// listTranscripts finds the transcripts across every source, newest first,
+// limited to the given scope and to limit entries when it is positive. Sources
+// are merged before the sort, so the list is one timeline over all the
+// accounts rather than a run of each. Scoping happens before the limit, so
+// asking for one project gives that project's newest sessions rather than
+// whatever of it survived a global cut. Only file metadata is read here, which
+// is what keeps it fast; readTranscript does the expensive part.
+func listTranscripts(sources []source, limit int, within scope) ([]transcript, error) {
+	var entries []transcript
 	for _, src := range sources {
-		transcripts, err := filepath.Glob(filepath.Join(src.root, "*", "*.jsonl"))
+		paths, err := filepath.Glob(filepath.Join(src.root, "*", "*.jsonl"))
 		if err != nil {
 			return nil, err
 		}
-		for _, path := range transcripts {
+		for _, path := range paths {
 			info, err := os.Stat(path)
 			if err != nil || info.IsDir() {
 				continue
@@ -268,7 +271,7 @@ func latestSessions(sources []source, limit int, within scope) ([]Session, error
 			if !within.coversDir(filepath.Base(filepath.Dir(path))) {
 				continue
 			}
-			entries = append(entries, entry{
+			entries = append(entries, transcript{
 				path:    path,
 				id:      strings.TrimSuffix(name, ".jsonl"),
 				dir:     filepath.Base(filepath.Dir(path)),
@@ -283,34 +286,50 @@ func latestSessions(sources []source, limit int, within scope) ([]Session, error
 		}
 		return entries[i].mtime.After(entries[j].mtime)
 	})
-	if len(entries) > limit {
+	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
 	}
+	return entries, nil
+}
 
-	// Only the newest transcripts are parsed: reading every session on disk
-	// would cost seconds for a list that shows a few dozen rows.
+// readTranscript parses one transcript into a Session. It reports false for
+// one that cannot be read or that turns out to lie outside the scope.
+func readTranscript(e transcript, within scope) (Session, bool) {
+	first, last, cwd, err := readSession(e.path)
+	if err != nil {
+		return Session{}, false
+	}
+	// The directory name only encodes the path, so a recorded cwd has the
+	// final say on whether the session really is inside the scope. Without
+	// one the encoded match is all there is.
+	if cwd == "" {
+		cwd = dirToPath(e.dir)
+	} else if !within.coversPath(cwd) {
+		return Session{}, false
+	}
+	return Session{
+		ConvID:  e.id,
+		Cwd:     cwd,
+		MTime:   e.mtime,
+		First:   first,
+		Last:    last,
+		Account: e.account,
+	}, true
+}
+
+// latestSessions returns the most recently touched sessions across every
+// source, newest first, limited to the given scope. A limit of zero or less
+// means no limit.
+func latestSessions(sources []source, limit int, within scope) ([]Session, error) {
+	entries, err := listTranscripts(sources, limit, within)
+	if err != nil {
+		return nil, err
+	}
 	sessions := make([]Session, 0, len(entries))
 	for _, e := range entries {
-		first, last, cwd, err := readSession(e.path)
-		if err != nil {
-			continue
+		if session, ok := readTranscript(e, within); ok {
+			sessions = append(sessions, session)
 		}
-		// The directory name only encodes the path, so a recorded cwd has the
-		// final say on whether the session really is inside the scope. Without
-		// one the encoded match is all there is.
-		if cwd == "" {
-			cwd = dirToPath(e.dir)
-		} else if !within.coversPath(cwd) {
-			continue
-		}
-		sessions = append(sessions, Session{
-			ConvID:  e.id,
-			Cwd:     cwd,
-			MTime:   e.mtime,
-			First:   first,
-			Last:    last,
-			Account: e.account,
-		})
 	}
 	return sessions, nil
 }
