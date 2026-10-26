@@ -81,12 +81,19 @@ type manifestEntry struct {
 type manifest map[string]manifestEntry
 
 // hash identifies a manifest's contents. json.Marshal sorts map keys, so the
-// same entries always hash the same, on either machine.
+// same entries always hash the same, on either machine. It covers only each
+// session's mtime and size, not Dropped: another host's push can drop this
+// host's old sessions on the index, and that must not void this host's base.
 func (m manifest) hash() string {
-	if m == nil {
-		m = manifest{}
+	type version struct {
+		MTime time.Time `json:"mtime"`
+		Bytes int64     `json:"bytes"`
 	}
-	data, _ := json.Marshal(m)
+	versions := make(map[string]version, len(m))
+	for id, e := range m {
+		versions[id] = version{e.MTime, e.Bytes}
+	}
+	data, _ := json.Marshal(versions)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

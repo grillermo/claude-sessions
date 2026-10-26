@@ -160,6 +160,29 @@ func TestADroppedSessionStaysDroppedUntilItChanges(t *testing.T) {
 	}
 }
 
+func TestAnotherHostsCapDropDoesNotForceAFullPush(t *testing.T) {
+	st := store{t.TempDir()}
+	original, err := st.ingest("pc", delta(t, []Record{rec("a", 1, 40), rec("b", 2, 40)}, nil, true), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ingest("immunemac", delta(t, []Record{rec("c", 3, 40)}, nil, true), 100); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _, _ := readManifest(st.manifestPath("pc")); !stored["a"].Dropped {
+		t.Fatalf("immunemac's push did not drop pc's a: %v", stored)
+	}
+
+	// pc still holds the manifest from before the drop.
+	_, err = st.ingest("pc", delta(t, []Record{rec("a", 1, 40), rec("b", 2, 40), rec("d", 4, 10)}, original, false), 100)
+	if errors.Is(err, errResync) {
+		t.Fatal("a cap drop on the index made pc's delta resync")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIngestRejectsAHostNameThatIsNotAFileName(t *testing.T) {
 	st := store{t.TempDir()}
 	if _, err := st.ingest("../etc", delta(t, nil, nil, true), 100); err == nil {
