@@ -181,6 +181,10 @@ func TestTheSSHTransportResyncsWhenTheIndexAsksForIt(t *testing.T) {
 	if !strings.Contains(string(data), "-- macmini") {
 		t.Errorf("host not separated by --: %s", data)
 	}
+	want := `-- macmini PATH=/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:"$PATH" ~/c/claude-sessions/claude-sessions --ingest 'pc'`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("remote command lacks the PATH prefix or quoting:\n got %s\nwant %s", data, want)
+	}
 }
 
 func TestAHungSSHIsCutOff(t *testing.T) {

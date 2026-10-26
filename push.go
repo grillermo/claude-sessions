@@ -23,6 +23,10 @@ var pushInterval = time.Minute
 // hold push.lock forever.
 var sshTimeout = 2 * time.Minute
 
+// remotePath prefixes the remote ingest command: ssh runs it in a
+// non-login shell whose PATH has no Go, which the launcher needs to rebuild.
+const remotePath = `PATH=/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:"$PATH"`
+
 // pusher runs send under push.lock in dir, at most once per pushInterval,
 // again for as long as new pushes are asked for while one is running.
 type pusher struct {
@@ -134,7 +138,7 @@ func ingestAt(host string, delta io.Reader) (manifest, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", "-C", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", indexHost(),
-		"~/c/claude-sessions/claude-sessions --ingest "+shellQuote(host))
+		remotePath+" ~/c/claude-sessions/claude-sessions --ingest "+shellQuote(host))
 	cmd.Stdin = delta
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr

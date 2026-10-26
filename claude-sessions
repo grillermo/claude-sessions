@@ -47,7 +47,17 @@ else
 fi
 
 if [ "$needs_build" -eq 1 ]; then
-    (cd "$ROOT" && go build -trimpath -o "$BINARY" . && ln -sfn "claude-sessions-$GOOS-$GOARCH" bin/claude-sessions)
+    if command -v go >/dev/null 2>&1; then
+        (cd "$ROOT" && go build -trimpath -o "$BINARY" . && ln -sfn "claude-sessions-$GOOS-$GOARCH" bin/claude-sessions)
+    else
+        # No Go here (e.g. the bare PATH of an ssh command): the check above
+        # guarantees a binary, so run it as is. --ingest and --export speak a
+        # protocol over stdout/stderr, so they get no note.
+        case "${1:-}" in
+            --ingest|--export) ;;
+            *) echo "Go not found; running $BINARY without rebuilding" >&2 ;;
+        esac
+    fi
 fi
 
 # exec so the resumed session inherits this terminal directly.
