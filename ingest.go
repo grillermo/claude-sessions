@@ -117,8 +117,11 @@ func (st store) ingest(host string, in io.Reader, limit int64) (manifest, error)
 	}
 	for {
 		line, err := readLine(br)
-		if err != nil {
+		if err == io.EOF {
 			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading delta: %w", err)
 		}
 		var d deltaLine
 		if json.Unmarshal(line, &d) != nil {

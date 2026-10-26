@@ -166,3 +166,35 @@ func TestIngestRejectsAHostNameThatIsNotAFileName(t *testing.T) {
 		t.Error("a path in the host name was accepted")
 	}
 }
+
+// failingReader yields its data, then a non-EOF error, like a dropped connection.
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	if len(f.data) == 0 {
+		return 0, f.err
+	}
+	n := copy(p, f.data)
+	f.data = f.data[n:]
+	return n, nil
+}
+
+func TestATruncatedPushChangesNothing(t *testing.T) {
+	st := store{t.TempDir()}
+	if _, err := st.ingest("pc", delta(t, []Record{rec("a", 1, 10), rec("b", 2, 10)}, nil, true), 1000); err != nil {
+		t.Fatal(err)
+	}
+	full := delta(t, []Record{rec("z", 3, 10), rec("y", 4, 10)}, nil, true).Bytes()
+	cut := bytes.IndexByte(full, '\n') + 1
+	cut += bytes.IndexByte(full[cut:], '\n') + 1 // header and first record
+	boom := errors.New("connection reset")
+	if _, err := st.ingest("pc", &failingReader{data: full[:cut], err: boom}, 1000); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the read error", err)
+	}
+	if ids := storedIDs(t, st, "pc"); !reflect.DeepEqual(ids, []string{"a", "b"}) {
+		t.Errorf("a truncated push changed the records: %v", ids)
+	}
+}

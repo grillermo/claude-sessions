@@ -17,7 +17,11 @@ func lockFile(path string, wait bool) (unlock func(), ok bool, err error) {
 	if !wait {
 		how |= syscall.LOCK_NB
 	}
-	if err := syscall.Flock(int(file.Fd()), how); err != nil {
+	err = syscall.Flock(int(file.Fd()), how)
+	for errors.Is(err, syscall.EINTR) {
+		err = syscall.Flock(int(file.Fd()), how)
+	}
+	if err != nil {
 		file.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, false, nil
