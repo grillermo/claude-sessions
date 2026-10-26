@@ -33,3 +33,11 @@ after launch.
   the transcript and the cswap account.
 - **Push trigger: a debounced Stop/SessionEnd hook plus a 10-minute timer.** The hook keeps the
   index fresh, and the timer catches sessions that end abnormally.
+- **The push hook and timer ship through `~/c/agents-configs`, not an installer in this repo.**
+  User: "take advantage of the fact that I share my claude settings across all the machines
+  with ../agents-configs". The hook script goes in `agents-configs/hooks/`, which `install.sh`
+  already symlinks into `~/.claude/hooks/` on every host. `install.sh` registers the Stop and
+  SessionEnd entries in each machine-local `settings.json` with the same idempotent jq merge as
+  `register_env_guard`, and installs the launchd or systemd timer. git-sync carries the change,
+  and re-running `install.sh` on each host activates it. Checked: the macmini and pc both have the
+  hooks symlinks, jq, and the env guard registered.
