@@ -346,6 +346,7 @@ func TestEverySelectedStyleCarriesTheSelectionBackground(t *testing.T) {
 		"first":   selectedFirst,
 		"last":    selectedLast,
 		"account": selectedAccount,
+		"host":    selectedHost,
 	}
 	for name, style := range styles {
 		if style.GetBackground() != selectionBg {

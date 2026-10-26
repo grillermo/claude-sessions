@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,7 @@ var (
 	firstStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 	lastStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	accountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	hostStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 
 	// Every selected style shares the background: segments are rendered one
 	// after another, so each has to paint its own stretch of the row.
@@ -50,6 +52,7 @@ var (
 	selectedFirst   = selectedRow.Foreground(lipgloss.Color("231"))
 	selectedLast    = selectedRow.Foreground(lipgloss.Color("252"))
 	selectedAccount = selectedRow.Foreground(lipgloss.Color("219"))
+	selectedHost    = selectedRow.Foreground(lipgloss.Color("157"))
 
 	labelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	footerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
@@ -78,6 +81,18 @@ type model struct {
 	// pending are transcripts not read yet; they stream in batch by batch so
 	// the list is usable before the last one is parsed.
 	pending []transcript
+	// local are this machine's sessions, remote the other machines' from the
+	// shared index; sessions is both merged into one timeline.
+	local  []Session
+	remote []Session
+	// remoteSrc is where the other machines' rows come from; nil for none.
+	remoteSrc *remoteSource
+	// remoteSeen, remoteLive and remoteSynced describe the remote rows for the
+	// title: whether there are any, whether they were just synced, and when
+	// they were last synced.
+	remoteSeen   bool
+	remoteLive   bool
+	remoteSynced time.Time
 	// chosen is the session Enter picked, resumed after the TUI shuts down.
 	chosen *Session
 }
@@ -86,9 +101,31 @@ func newModel(sessions []Session, within scope) model {
 	for i := range sessions {
 		sessions[i].index()
 	}
-	m := model{sessions: sessions, scope: within, now: time.Now(), width: 80, height: 24}
-	m.applyFilter()
+	m := model{local: sessions, scope: within, now: time.Now(), width: 80, height: 24}
+	m.rebuild()
 	return m
+}
+
+// rebuild merges this machine's sessions with the other machines' into one
+// timeline, newest first, and keeps the cursor on the session it was on.
+func (m *model) rebuild() {
+	keep := m.selected()
+	merged := make([]Session, 0, len(m.local)+len(m.remote))
+	merged = append(merged, m.local...)
+	merged = append(merged, m.remote...)
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].MTime.After(merged[j].MTime) })
+	m.sessions = merged
+	m.applyFilter()
+	if keep == nil {
+		return
+	}
+	for i, s := range m.filtered {
+		if s.ConvID == keep.ConvID && s.Host == keep.Host {
+			m.cursor = i
+			break
+		}
+	}
+	m.scrollIntoView()
 }
 
 // prefillSearch opens search mode with the query already typed.
@@ -196,7 +233,11 @@ func loadNext(pending []transcript, within scope) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	return loadNext(m.pending, m.scope)
+	cmds := []tea.Cmd{loadNext(m.pending, m.scope)}
+	if m.remoteSrc != nil {
+		cmds = append(cmds, loadCachedRemote(*m.remoteSrc), fetchRemote(*m.remoteSrc))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -212,10 +253,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case batchMsg:
-		m.sessions = append(m.sessions, msg.sessions...)
+		m.local = append(m.local, msg.sessions...)
 		m.pending = msg.rest
-		m.applyFilter()
+		m.rebuild()
 		return m, loadNext(m.pending, m.scope)
+
+	case remoteMsg:
+		// The cache read and the sync race; stale rows must not replace fresh ones.
+		if m.remoteLive && !msg.live {
+			return m, nil
+		}
+		var remote []Session
+		for _, s := range msg.sessions {
+			if m.scope.coversRemote(s.Cwd) {
+				s.index()
+				remote = append(remote, s)
+			}
+		}
+		m.remote = remote
+		m.remoteSeen, m.remoteLive, m.remoteSynced = true, msg.live, msg.synced
+		m.rebuild()
+		return m, nil
 
 	case tea.KeyMsg:
 		if m.searching {
@@ -416,6 +474,9 @@ func (m model) titleLine() string {
 		count += fmt.Sprintf(" · loading %d more…", len(m.pending))
 	}
 	title := headerStyle.Render("Claude sessions") + "  " + ageStyle.Render(count)
+	if status := m.remoteStatus(); status != "" {
+		title += "  " + ageStyle.Render(status)
+	}
 	if m.scope.path != "" {
 		title += "  " + pathStyle.Render("in "+m.scope.path)
 	}
@@ -423,6 +484,21 @@ func (m model) titleLine() string {
 		title += "  " + searchStyle.Render("/"+m.query+cursorMark(m.searching))
 	}
 	return title
+}
+
+// remoteStatus tells whether the other machines' rows are fresh or how old
+// they are; it is empty when there are none at all.
+func (m model) remoteStatus() string {
+	switch {
+	case !m.remoteSeen:
+		return ""
+	case m.remoteLive:
+		return "remote: live"
+	case m.remoteSynced.IsZero():
+		return "remote: cached"
+	default:
+		return "remote: cached " + timeAgo(m.now.Sub(m.remoteSynced))
+	}
 }
 
 func cursorMark(active bool) string {
@@ -478,12 +554,16 @@ func (m model) renderRow(s Session, selected bool) string {
 	return b.String()
 }
 
-// headerSegments is a row's first line: where the session ran, which account it
-// belongs to, and how long ago it was touched. The path gives way to the other
-// two, since they are short and neither survives being cut.
+// headerSegments is a row's first line: where the session ran, on which other
+// machine if not this one, which account it belongs to, and how long ago it
+// was touched. The path gives way to the rest, since they are short and none
+// survives being cut.
 func (m model) headerSegments(s Session, width int, selected bool) []segment {
 	account := s.Account.label()
 	room := width - 14
+	if s.Host != "" {
+		room -= len([]rune(s.Host)) + 2
+	}
 	if account != "" {
 		room -= len([]rune(account)) + 2
 	}
@@ -491,6 +571,11 @@ func (m model) headerSegments(s Session, width int, selected bool) []segment {
 	segments := []segment{
 		m.gutter(selected),
 		{truncate(s.Cwd, room), pathStyle, selectedPath},
+	}
+	if s.Host != "" {
+		segments = append(segments,
+			segment{"  ", plainStyle, selectedRow},
+			segment{s.Host, hostStyle, selectedHost})
 	}
 	if account != "" {
 		segments = append(segments,
@@ -688,6 +773,9 @@ func main() {
 
 	m := newModel(nil, within)
 	m.pending = pending
+	if src, err := newRemoteSource(); err == nil {
+		m.remoteSrc = &src
+	}
 	if arg == "" {
 		m.prefillSearch(cwdName())
 	}
