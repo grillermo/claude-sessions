@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -806,18 +807,23 @@ func main() {
 
 	// Report the directory before exec'ing: after exec there is no more of this
 	// process left to run, and the shell function needs the answer regardless of
-	// how the session ends.
-	reportCwd(final.chosen.Cwd)
+	// how the session ends. A session on another machine leaves this shell
+	// where it is.
+	if final.chosen.Host == "" {
+		reportCwd(final.chosen.Cwd)
+	}
 
-	// Hand the terminal over to Claude: exec replaces this process, so the
-	// session runs where the TUI was, with no shell wrapper left behind.
-	command := resumeCommand(*final.chosen)
+	// Hand the terminal over: exec replaces this process, so the session runs
+	// where the TUI was, with no wrapper left behind.
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	if err := syscall.Exec(shell, []string{shell, "-c", command}, os.Environ()); err != nil {
-		fmt.Fprintln(os.Stderr, "claude-sessions: could not resume:", err)
-		os.Exit(1)
+	argv := resumeArgv(*final.chosen, shell)
+	path, err := exec.LookPath(argv[0])
+	if err == nil {
+		err = syscall.Exec(path, argv, os.Environ())
 	}
+	fmt.Fprintln(os.Stderr, "claude-sessions: could not resume:", err)
+	os.Exit(1)
 }

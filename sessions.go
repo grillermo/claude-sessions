@@ -234,6 +234,20 @@ func resumeCommand(s Session) string {
 	return fmt.Sprintf("cd %s && %s", shellQuote(s.Cwd), launch)
 }
 
+// resumeArgv is the program and arguments that resume a session. A session
+// from another machine resumes on that machine, over ssh with a terminal,
+// through its login shell so its PATH finds claude and cswap; that machine has
+// the working tree, the transcript, and the account. The host comes from the
+// shared index, so "--" keeps one that starts with a dash from being read as
+// an ssh option; the remote command quotes the cwd and ID twice, once for the
+// shell ssh runs and once for the login shell.
+func resumeArgv(s Session, shell string) []string {
+	if s.Host != "" {
+		return []string{"ssh", "-t", "--", s.Host, `exec "$SHELL" -lic ` + shellQuote(resumeCommand(s))}
+	}
+	return []string{shell, "-c", resumeCommand(s)}
+}
+
 // cwdFileEnv names the file a wrapping shell function asks us to write the
 // chosen session's directory into. A child process cannot change its parent
 // shell's directory, so the function reads the file back and cds there itself.

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -177,5 +178,22 @@ func TestTheAccountDoesNotPushTheHeaderPastTheScreen(t *testing.T) {
 		if width := len([]rune(plain)); width != m.width {
 			t.Errorf("line is %d wide, want %d: %q", width, m.width, plain)
 		}
+	}
+}
+
+func TestARemoteSessionResumesOverSSHOnItsHost(t *testing.T) {
+	s := Session{ConvID: "abc", Cwd: "/home/me/c/it's", Host: "pc", Account: account{number: 2, email: "me@x.com"}}
+	inner := `cd '/home/me/c/it'\''s' && cswap run 2 -- --resume 'abc'`
+	want := []string{"ssh", "-t", "--", "pc", `exec "$SHELL" -lic ` + shellQuote(inner)}
+	if got := resumeArgv(s, "/bin/zsh"); !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q\nwant   %q", got, want)
+	}
+}
+
+func TestALocalSessionResumesThroughTheShell(t *testing.T) {
+	s := Session{ConvID: "abc", Cwd: "/tmp/proj"}
+	want := []string{"/bin/zsh", "-c", `cd '/tmp/proj' && claude --resume 'abc'`}
+	if got := resumeArgv(s, "/bin/zsh"); !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q", got)
 	}
 }
