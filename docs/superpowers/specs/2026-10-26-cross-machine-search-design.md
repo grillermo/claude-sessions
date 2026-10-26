@@ -17,8 +17,15 @@ after launch.
   sleeping host stays searchable at its last push.
 - **Startup: cached remote rows show at once, refreshed in the background.** Startup must stay
   fast, and async updates are acceptable.
-- **Search depth: first + last + every user prompt, capped at about 4 KB per session.** This makes
-  topics from the middle of a session findable.
+- **Search depth: every prompt and every Claude answer (all prose), not just first/last.** This
+  replaces the earlier "first + last + prompts capped at 4 KB" choice. Measured prose today: about
+  9 MB across the three hosts (immunemac 5.4, macmini 3.1, pc 0.6), so it fits in memory.
+- **Cap: the newest 1000 MB of history, oldest sessions purged first.** Measured on raw transcript
+  bytes across all hosts (846 MB today, so nothing is purged yet). Purging only removes sessions
+  from the shared index on the macmini. Transcripts on disk are never deleted. (The basis and the
+  purge target are my defaults; the user has not confirmed them yet.)
+- **Subagent transcripts are not indexed.** Their output already returns to the parent session.
+  (My default; the user has not confirmed it yet.)
 - **Resume of a row from another machine: `ssh -t` to that host.** That host has the working tree,
   the transcript and the cswap account.
 - **Push trigger: a debounced Stop/SessionEnd hook plus a 10-minute timer.** The hook keeps the
