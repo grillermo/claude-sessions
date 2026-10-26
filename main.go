@@ -265,13 +265,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var remote []Session
 		for _, s := range msg.sessions {
+			// Already indexed by Record.session, which drops the text it indexed.
 			if m.scope.coversRemote(s.Cwd) {
-				s.index()
 				remote = append(remote, s)
 			}
 		}
 		m.remote = remote
-		m.remoteSeen, m.remoteLive, m.remoteSynced = true, msg.live, msg.synced
+		// An empty mirror on a machine that never synced is no remote data.
+		if len(msg.sessions) > 0 || msg.live {
+			m.remoteSeen = true
+		}
+		m.remoteLive, m.remoteSynced = msg.live, msg.synced
 		m.rebuild()
 		return m, nil
 
@@ -729,6 +733,13 @@ func projectSources() ([]source, error) {
 	return discoverSources(home), nil
 }
 
+// nothingToList is true when there are no transcripts here and no other
+// machines to list sessions from either. With a remote source the TUI starts
+// even with no local sessions: the other machines' rows may be all there is.
+func nothingToList(pending []transcript, remote *remoteSource) bool {
+	return len(pending) == 0 && remote == nil
+}
+
 func main() {
 	if exit, handled := runCommand(os.Args[1:]); handled {
 		os.Exit(exit)
@@ -762,7 +773,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
 		os.Exit(1)
 	}
-	if len(pending) == 0 {
+	var remote *remoteSource
+	if src, err := newRemoteSource(); err == nil {
+		remote = &src
+	}
+	if nothingToList(pending, remote) {
 		missing := "claude-sessions: no Claude sessions found"
 		if within.path != "" {
 			missing += " in " + within.path
@@ -773,9 +788,7 @@ func main() {
 
 	m := newModel(nil, within)
 	m.pending = pending
-	if src, err := newRemoteSource(); err == nil {
-		m.remoteSrc = &src
-	}
+	m.remoteSrc = remote
 	if arg == "" {
 		m.prefillSearch(cwdName())
 	}

@@ -8,11 +8,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,8 +34,9 @@ type remoteSource struct {
 	self     string // this machine, whose rows come from its own transcripts
 }
 
-// fetchTimeout bounds the background rsync.
-var fetchTimeout = 30 * time.Second
+// fetchTimeout bounds the background rsync. It is generous because the first
+// sync of a new mirror can carry gigabytes, and it runs off the UI thread.
+var fetchTimeout = 10 * time.Minute
 
 func newRemoteSource() (remoteSource, error) {
 	cache, err := cacheDir()
@@ -41,10 +44,13 @@ func newRemoteSource() (remoteSource, error) {
 		return remoteSource{}, err
 	}
 	self := localHost()
+	if self == "" {
+		return remoteSource{}, errors.New("this machine has no host name")
+	}
 	if dir := os.Getenv("CLAUDE_SESSIONS_REMOTE"); dir != "" {
 		return remoteSource{dir: filepath.Join(cache, "remote"), rsyncSrc: strings.TrimRight(dir, "/") + "/", self: self}, nil
 	}
-	if self == indexHost() {
+	if self == strings.ToLower(indexHost()) {
 		return remoteSource{dir: filepath.Join(cache, "hosts"), self: self}, nil
 	}
 	return remoteSource{
@@ -88,16 +94,25 @@ func (r remoteSource) syncedAt() time.Time {
 
 // sync brings the mirror up to date. rsync writes each file under a temporary
 // name and renames it, so a sync that dies halfway leaves whole files behind.
+// On a timeout rsync gets SIGTERM, so it can clean up its temporary file; any
+// that a harder death left behind are removed before the next sync, since
+// --delete never touches files the filter excludes.
 func (r remoteSource) sync() error {
 	if err := os.MkdirAll(r.dir, 0o755); err != nil {
 		return err
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(r.dir, ".*.jsonl.*"))
+	for _, path := range leftovers {
+		os.Remove(path)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rsync", "-az", "--delete",
 		"--include=*.jsonl", "--exclude=*",
 		"-e", "ssh -o BatchMode=yes -o ConnectTimeout=5",
-		r.rsyncSrc, r.dir+"/")
+		"--", r.rsyncSrc, r.dir+"/")
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
 		return err
 	}

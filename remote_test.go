@@ -62,7 +62,8 @@ func TestTheTitleSaysHowOldTheRemoteRowsAre(t *testing.T) {
 func TestRemoteRowsShowTheirHostAndMatchIt(t *testing.T) {
 	m := newModel([]Session{{ConvID: "l", Cwd: "/a", First: "x", Last: "y"}}, scope{})
 	m.width = 120
-	next, _ := m.Update(remoteMsg{live: true, sessions: []Session{{ConvID: "r", Host: "pc", Cwd: "/home/me/c", First: "x", Last: "y"}}})
+	remote := Record{ID: "r", Host: "pc", Cwd: "/home/me/c", First: "x", Last: "y"}.session()
+	next, _ := m.Update(remoteMsg{live: true, sessions: []Session{remote}})
 	got := next.(model)
 
 	var row string
@@ -145,5 +146,81 @@ func TestHomeRelativeMatchesMacAndLinuxHomes(t *testing.T) {
 		if got := homeRelative(in); got != want {
 			t.Errorf("homeRelative(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestASyncClearsLeftoverRsyncTempFiles(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err != nil {
+		t.Skip("rsync not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	index := t.TempDir()
+	t.Setenv("CLAUDE_SESSIONS_REMOTE", index)
+	t.Setenv("CLAUDE_SESSIONS_HOST", "immunemac")
+	writeRecordFile(filepath.Join(index, "pc.jsonl"), []Record{{Host: "pc", ID: "a", MTime: time.Now()}})
+
+	src, err := newRemoteSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(src.dir, 0o755)
+	leftover := filepath.Join(src.dir, ".pc.jsonl.AbC123")
+	os.WriteFile(leftover, []byte("half a file"), 0o644)
+
+	if msg, ok := fetchRemote(src)().(remoteMsg); !ok || len(msg.sessions) != 1 {
+		t.Fatalf("fetch = %+v", msg)
+	}
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Error("the leftover temp file survived the sync")
+	}
+}
+
+func TestAnEmptyCacheShowsNoRemoteStatus(t *testing.T) {
+	m := newModel(nil, scope{})
+	next, _ := m.Update(remoteMsg{})
+	if title := next.(model).titleLine(); strings.Contains(title, "remote:") {
+		t.Errorf("title = %q", title)
+	}
+}
+
+func TestAnIndexHostNamedInCapitalsIsThisMachine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_SESSIONS_REMOTE", "")
+	t.Setenv("CLAUDE_SESSIONS_HOST", "macmini")
+	t.Setenv("CLAUDE_SESSIONS_INDEX_HOST", "MacMini")
+	src, err := newRemoteSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.rsyncSrc != "" || filepath.Base(src.dir) != "hosts" {
+		t.Errorf("src = %+v", src)
+	}
+}
+
+func TestRemoteRowsAreSearchedByTheirFullText(t *testing.T) {
+	s := Record{Host: "pc", ID: "r", Text: "Somewhere Deep"}.session()
+	if s.Text != "" {
+		t.Errorf("the text is kept twice: %q", s.Text)
+	}
+	m := newModel(nil, scope{})
+	next, _ := m.Update(remoteMsg{live: true, sessions: []Session{s}})
+	got := next.(model)
+	got.query = "somewhere deep"
+	got.applyFilter()
+	if len(got.filtered) != 1 {
+		t.Errorf("full-text search kept %d rows", len(got.filtered))
+	}
+}
+
+func TestTheTUIStartsWithOnlyRemoteSessions(t *testing.T) {
+	src := &remoteSource{dir: t.TempDir()}
+	if nothingToList(nil, src) {
+		t.Error("a remote source alone should be enough to start")
+	}
+	if !nothingToList(nil, nil) {
+		t.Error("no transcripts and no remote source should be nothing to list")
+	}
+	if nothingToList([]transcript{{}}, nil) {
+		t.Error("local transcripts should be enough to start")
 	}
 }

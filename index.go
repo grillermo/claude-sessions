@@ -67,6 +67,9 @@ func (r Record) session() Session {
 		Host:    r.Host,
 	}
 	s.index()
+	// The haystack holds the text now; keeping it twice doubles the memory a
+	// few gigabytes of other machines' sessions take.
+	s.Text = ""
 	return s
 }
 
