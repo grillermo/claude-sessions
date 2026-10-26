@@ -529,3 +529,27 @@ func TestDropLastWordLikeATerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterMatchesTheMiddleOfASession(t *testing.T) {
+	root := writeTranscript(t, "-tmp-x", "id1",
+		`{"type":"user","message":{"content":"start here"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"the flux capacitor is fine"}]}}`,
+		`{"type":"user","message":{"content":"thanks, bye"}}`,
+	)
+
+	sessions, err := latestSessions(local(root), 20, scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "start here\n\nthe flux capacitor is fine\n\nthanks, bye"
+	if sessions[0].Text != want {
+		t.Errorf("text = %q, want %q", sessions[0].Text, want)
+	}
+
+	m := newModel(sessions, scope{})
+	m.query = "FLUX CAPACITOR"
+	m.applyFilter()
+	if len(m.filtered) != 1 {
+		t.Errorf("a phrase from the middle matched %d sessions, want 1", len(m.filtered))
+	}
+}

@@ -83,6 +83,9 @@ type model struct {
 }
 
 func newModel(sessions []Session, within scope) model {
+	for i := range sessions {
+		sessions[i].index()
+	}
 	m := model{sessions: sessions, scope: within, now: time.Now(), width: 80, height: 24}
 	m.applyFilter()
 	return m
@@ -128,8 +131,7 @@ func (m *model) applyFilter() {
 	} else {
 		matched := make([]Session, 0, len(m.sessions))
 		for _, s := range m.sessions {
-			haystack := strings.ToLower(s.First + "\n" + s.Last + "\n" + s.Cwd + "\n" + s.Account.label())
-			if strings.Contains(haystack, query) {
+			if strings.Contains(s.haystack, query) {
 				matched = append(matched, s)
 			}
 		}

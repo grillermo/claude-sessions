@@ -35,6 +35,20 @@ type Session struct {
 	First   string
 	Last    string
 	Account account
+	// Text is every prose block of the session, yours and Claude's, in order.
+	Text string
+	// Host is the machine a session from the shared index ran on; empty for
+	// this machine's own sessions.
+	Host string
+	// haystack is what the filter searches, lowercased once by index.
+	haystack string
+}
+
+// index builds the lowercased search text, so filtering does not lowercase
+// every session's full text on every keystroke.
+func (s *Session) index() {
+	s.haystack = strings.ToLower(strings.Join(
+		[]string{s.First, s.Last, s.Cwd, s.Account.label(), s.Host, s.Text}, "\n"))
 }
 
 // record is the slice of a transcript line we care about.
@@ -167,15 +181,16 @@ func messageTexts(rec record) []string {
 	return texts
 }
 
-// readSession reads one transcript and returns its first and last messages
-// along with the cwd it recorded, if any.
-func readSession(transcript string) (first, last, cwd string, err error) {
+// readSession reads one transcript and returns its first and last messages,
+// all of its prose joined by blank lines, and the cwd it recorded, if any.
+func readSession(transcript string) (first, last, cwd, text string, err error) {
 	file, err := os.Open(transcript)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	defer file.Close()
 
+	var texts []string
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -193,16 +208,17 @@ func readSession(transcript string) (first, last, cwd string, err error) {
 		if rec.IsMeta || (rec.Type != "user" && rec.Type != "assistant") {
 			continue
 		}
-		for _, text := range messageTexts(rec) {
-			last = text
-			if first == "" && rec.Type == "user" && !isBareCommand(text) {
-				first = text
+		for _, block := range messageTexts(rec) {
+			texts = append(texts, block)
+			last = block
+			if first == "" && rec.Type == "user" && !isBareCommand(block) {
+				first = block
 			}
 		}
 	}
 	// A truncated or oversized line ends the scan; whatever we read is still
 	// worth showing.
-	return first, last, cwd, nil
+	return first, last, cwd, strings.Join(texts, "\n\n"), nil
 }
 
 // resumeCommand returns the shell command that resumes a session. A session
@@ -295,7 +311,7 @@ func listTranscripts(sources []source, limit int, within scope) ([]transcript, e
 // readTranscript parses one transcript into a Session. It reports false for
 // one that cannot be read or that turns out to lie outside the scope.
 func readTranscript(e transcript, within scope) (Session, bool) {
-	first, last, cwd, err := readSession(e.path)
+	first, last, cwd, text, err := readSession(e.path)
 	if err != nil {
 		return Session{}, false
 	}
@@ -307,14 +323,17 @@ func readTranscript(e transcript, within scope) (Session, bool) {
 	} else if !within.coversPath(cwd) {
 		return Session{}, false
 	}
-	return Session{
+	s := Session{
 		ConvID:  e.id,
 		Cwd:     cwd,
 		MTime:   e.mtime,
 		First:   first,
 		Last:    last,
 		Account: e.account,
-	}, true
+		Text:    text,
+	}
+	s.index()
+	return s, true
 }
 
 // latestSessions returns the most recently touched sessions across every
