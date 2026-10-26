@@ -645,6 +645,9 @@ func projectSources() ([]source, error) {
 }
 
 func main() {
+	if exit, handled := runCommand(os.Args[1:]); handled {
+		os.Exit(exit)
+	}
 	sources, err := projectSources()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claude-sessions:", err)
