@@ -23,7 +23,10 @@ after launch.
 - **Cap: the newest 1000 MB of history, oldest sessions purged first.** Measured on raw transcript
   bytes across all hosts (846 MB today, so nothing is purged yet). Purging only removes sessions
   from the shared index on the macmini. Transcripts on disk are never deleted. (The basis and the
-  purge target are my defaults; the user has not confirmed them yet.)
+  purge target are my defaults; the user has not confirmed them yet.) User: "when the cap is
+  reached, enough old conversations should be dropped to make space for new ones." The cap is a
+  rolling window. After each push, sessions are dropped oldest-mtime first, only as many as it
+  takes to get the total back under 1000 MB, so the newest sessions always fit.
 - **Subagent transcripts are not indexed.** Their output already returns to the parent session.
   (My default; the user has not confirmed it yet.)
 - **Resume of a row from another machine: `ssh -t` to that host.** That host has the working tree,
