@@ -109,3 +109,91 @@ func TestThePushLogKeepsTheLastHundredLines(t *testing.T) {
 		t.Errorf("log has %d lines", n)
 	}
 }
+
+func TestAFailedSendKeepsThePendingMarkAndLeavesNoStamp(t *testing.T) {
+	withInterval(t, 0)
+	dir := t.TempDir()
+	calls := 0
+	p := pusher{dir: dir, send: func() error {
+		calls++
+		return os.ErrInvalid
+	}}
+	if err := p.run(); err == nil {
+		t.Fatal("run hid the send error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "push.stamp")); err == nil {
+		t.Error("a stamp was written after a failed push")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "push.pending")); err != nil {
+		t.Error("the pending mark was lost by a failed push")
+	}
+}
+
+func TestAFutureStampDoesNotSleepPastTheInterval(t *testing.T) {
+	withInterval(t, 100*time.Millisecond)
+	dir := t.TempDir()
+	stamp := filepath.Join(dir, "push.stamp")
+	touch(stamp)
+	future := time.Now().Add(3 * time.Hour)
+	os.Chtimes(stamp, future, future)
+	start := time.Now()
+	p := pusher{dir: dir, send: func() error { return nil }}
+	if err := p.run(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("slept %v for a stamp in the future", elapsed)
+	}
+}
+
+// fakeSSH puts an ssh script first on PATH and returns the file where it logs
+// each call's arguments.
+func fakeSSH(t *testing.T, script string) string {
+	t.Helper()
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "calls")
+	body := "#!/bin/sh\necho \"$@\" >> " + log + "\ncat > /dev/null\n" + script
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CLAUDE_SESSIONS_REMOTE", "")
+	t.Setenv("CLAUDE_SESSIONS_HOST", "pc")
+	t.Setenv("CLAUDE_SESSIONS_INDEX_HOST", "macmini")
+	return log
+}
+
+func TestTheSSHTransportResyncsWhenTheIndexAsksForIt(t *testing.T) {
+	root := writeTranscript(t, "-home-me-c-x", "s1",
+		`{"type":"user","cwd":"/home/me/c/x","message":{"content":"hi"}}`)
+	t.Setenv("CLAUDE_PROJECTS_DIR", root)
+	log := fakeSSH(t, "if [ \"$(wc -l < "+"\"$0.n\" 2>/dev/null || echo 0)\" -eq 0 ]; then echo x >> \"$0.n\"; exit 3; fi\necho '{}'\n")
+	cache := t.TempDir()
+	if err := writeManifest(filepath.Join(cache, "pushed.json"), manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pushOnce(cache); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(log)
+	if n := strings.Count(string(data), "\n"); n != 2 {
+		t.Errorf("ssh ran %d times, want 2 (delta, then full)", n)
+	}
+	if !strings.Contains(string(data), "-- macmini") {
+		t.Errorf("host not separated by --: %s", data)
+	}
+}
+
+func TestAHungSSHIsCutOff(t *testing.T) {
+	old := sshTimeout
+	sshTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { sshTimeout = old })
+	fakeSSH(t, "exec sleep 30\n")
+	start := time.Now()
+	_, err := ingestAt("pc", strings.NewReader(""))
+	if err == nil {
+		t.Fatal("a hung ssh reported success")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("took %v to give up", elapsed)
+	}
+}

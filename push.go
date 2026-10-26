@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,10 @@ import (
 
 // pushInterval is the least time between two pushes from one machine.
 var pushInterval = time.Minute
+
+// sshTimeout bounds one ssh to the index host, so a hung connection cannot
+// hold push.lock forever.
+var sshTimeout = 2 * time.Minute
 
 // pusher runs send under push.lock in dir, at most once per pushInterval,
 // again for as long as new pushes are asked for while one is running.
@@ -44,11 +49,14 @@ func (p pusher) run() error {
 	for {
 		if info, err := os.Stat(stamp); err == nil {
 			if wait := pushInterval - time.Since(info.ModTime()); wait > 0 {
-				time.Sleep(wait)
+				// A stamp dated in the future must not hold the lock for hours.
+				time.Sleep(min(wait, pushInterval))
 			}
 		}
 		os.Remove(pending)
 		if err := p.send(); err != nil {
+			// A request that arrived during the failed send must survive.
+			touch(pending)
 			return err
 		}
 		if err := touch(stamp); err != nil {
@@ -122,11 +130,15 @@ func ingestAt(host string, delta io.Reader) (manifest, error) {
 		return store{filepath.Join(cache, "hosts")}.ingest(host, delta, capBytes())
 	}
 
-	cmd := exec.Command("ssh", "-C", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", indexHost(),
+	ctx, cancel := context.WithTimeout(context.Background(), sshTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh", "-C", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", indexHost(),
 		"~/c/claude-sessions/claude-sessions --ingest "+shellQuote(host))
 	cmd.Stdin = delta
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr
+	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == resyncExit {
