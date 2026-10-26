@@ -38,6 +38,14 @@ arrive a moment after launch.
   ../agents-configs". Checked: the macmini and pc both have `~/.claude/hooks/` symlinked from
   agents-configs, jq, and the env guard registered. On immunemac each cswap account's
   `settings.json` is a symlink to `~/.claude/settings.json`.
+- **Send only what changed, in both directions.** User: "add those two changes". Pushes carry only
+  new, changed and deleted sessions. Launches fetch the host files with `rsync -z` into a local
+  mirror, so only changed bytes cross the network, compressed. Measured on immunemac: the index is
+  6.4 MB (1.7 MB gzipped). A full 5 GB window extrapolates to about 78 MB (about 20 MB gzipped),
+  which re-sending whole on every push and every launch would make slow over WARP. Files stay
+  uncompressed at rest: gzip on disk saves only disk space, which doesn't matter here, and it
+  would defeat rsync's delta transfer. zstd was about 10% smaller than gzip, which isn't worth a
+  dependency.
 
 ## What exists today
 
@@ -98,21 +106,36 @@ A host's index is JSON lines, one record per session:
   `~/.cache/claude-sessions/local.json`, keyed by transcript path and storing `(mtime, size,
   record)`, means only new or changed transcripts get parsed again. The first run parses
   everything (about 2s on immunemac); later runs cost about as much as today's `stat` listing.
-- `--ingest <host>` runs on the macmini. It reads records from stdin and replaces that host's set
-  of sessions. It then applies the cap across all hosts and rewrites the changed files in
-  `~/.cache/claude-sessions/hosts/<host>.jsonl` (temp file plus rename). An `flock` on that
-  directory serializes concurrent ingests.
-- `--push` is `--export | ssh -C macmini '~/c/claude-sessions/claude-sessions --ingest <host>'`.
-  On the macmini it pipes to `--ingest` in-process, with no SSH. It's described under Push.
+  `--export --full` writes every record, and plain `--export` writes the delta against the pushed
+  manifest (below).
+- **Manifest.** For each host, the macmini keeps `hosts/<host>.manifest.json`: every session ID it
+  has seen from that host, with `mtime`, `bytes` and `dropped` (true if the cap removed it). After
+  each successful push the host keeps a copy, `~/.cache/claude-sessions/pushed.json`.
+- **Delta.** The first line of a delta is a header: `{"base":"<sha256 of the pushed manifest>"}`.
+  After it come the records for sessions that are new or whose `mtime` or `bytes` changed, then
+  `{"delete":"<id>"}` lines for sessions in the manifest whose transcript is gone. Sessions marked
+  `dropped` are not sent again unless their `mtime` changes, because a dropped session only comes
+  back when it gets new activity.
+- `--ingest <host>` runs on the macmini, under an `flock` on `hosts/`. If the header's `base` doesn't
+  match the hash of its own manifest for that host, it changes nothing and exits 3 (resync). The
+  same happens if the manifest is missing. Otherwise it merges the delta into that host's set, or
+  replaces the set when the header says `"full":true`. Then it applies the cap across all hosts,
+  rewrites the changed `hosts/<host>.jsonl` and manifest files (temp file plus rename), and writes
+  the host's new manifest to stdout.
+- `--push` is `--export | ssh -C macmini '~/c/claude-sessions/claude-sessions --ingest <host>'`. It
+  saves the returned manifest as `pushed.json`. On exit 3, or when there's no `pushed.json`, it
+  sends `--export --full` right away. On the macmini it runs `--ingest` in-process, with no SSH.
+  It's described under Push.
 
 ### Cap
 
 Every ingest rebuilds the full set of sessions across all hosts, sorts it newest first by mtime
 (ties broken by `(host, id)`), adds up `bytes`, and keeps sessions until the next one would push
 the total over 5 GB (5 × 1024 × 1024 × 1024 bytes). It drops every older session. Nothing more is
-dropped than needed. A dropped session that a host pushes again is still the oldest, so the same
-ingest drops it again; no cutoff state has to be stored. The cap is a constant, overridable with
-`CLAUDE_SESSIONS_CAP_MB` for tests.
+dropped than needed. A dropped session's record leaves `hosts/<host>.jsonl`, but its manifest entry
+stays with `dropped: true`, so the host doesn't send it again. If that session gets new activity,
+its `mtime` changes, the host sends it as a changed session, and as the newest session it fits
+under the cap again. The cap is a constant, overridable with `CLAUDE_SESSIONS_CAP_MB` for tests.
 
 ### Push
 
@@ -125,19 +148,26 @@ ingest drops it again; no cutoff state has to be stored. The cap is a constant, 
    mark.
 4. The holder waits until at least 60s have passed since the last successful push (stored in
    `push.stamp`). Then it repeats one step until `push.pending` is no older than when the step
-   started: clear the pending mark, export, send. This trailing debounce means a burst of turns
-   costs one push, and the last turn is never lost.
+   started: clear the pending mark, export the delta, send. This trailing debounce means a burst of
+   turns costs one push, and the last turn is never lost. A typical push is the one or two
+   sessions that just changed, so a few KB.
 5. Errors go to `~/.cache/claude-sessions/push.log`, trimmed to the last 100 lines. Push always
    exits 0.
 
 ### Fetch (reader)
 
-- `loadCachedRemote` reads `~/.cache/claude-sessions/remote.jsonl` and returns a `remoteMsg`
-  stamped with the file's mtime.
-- `fetchRemote` runs `ssh -o BatchMode=yes -o ConnectTimeout=5 macmini find
-  ~/.cache/claude-sessions/hosts -name '*.jsonl' -exec cat {} +` with a 10s overall timeout. It
-  writes the result to `remote.jsonl` (temp file plus rename) and returns a live `remoteMsg`. On
-  the macmini it reads the directory directly.
+- The local mirror is `~/.cache/claude-sessions/remote/`, which holds a copy of the macmini's
+  `hosts/*.jsonl`. The manifests aren't copied.
+- `loadCachedRemote` reads every `*.jsonl` in the mirror and returns a `remoteMsg` stamped with the
+  time of the last successful sync (`remote/.synced`).
+- `fetchRemote` runs `rsync -az --delete --include='*.jsonl' --exclude='*' -e 'ssh -o
+  BatchMode=yes -o ConnectTimeout=5' macmini:.cache/claude-sessions/hosts/
+  ~/.cache/claude-sessions/remote/` with a 30s overall timeout. rsync only transfers the changed
+  parts of each file, compressed, and it writes each file to a temp name and renames it, so a
+  partial sync never leaves a half-written file. If rsync succeeds, the reader touches
+  `remote/.synced` and returns a live `remoteMsg` from the mirror. If a sync fails partway, files
+  that were already updated stay updated, and the rest keep their previous contents. On the
+  macmini there's no sync: it reads `hosts/` directly.
 - Both parse records off the UI thread. Bad lines are skipped.
 
 ### agents-configs changes
@@ -164,7 +194,9 @@ ingest drops it again; no cutoff state has to be stored. The cap is a constant, 
   exit: keep the cached rows and show `remote: cached <age>`. With no cache, there are no remote
   rows and no error screen.
 - **Ingest** only rewrites a host file through temp file plus rename, under the lock. A crash
-  leaves the previous files in place.
+  leaves the previous files in place. A base mismatch (lost or diverged manifest, or a push whose
+  reply never arrived) costs one full push and nothing else. The manifest is written last, so a
+  crash between the data and the manifest shows up as a mismatch on the next push.
 - **Remote resume** when the host is off: ssh prints its own error in the terminal, which
   claude-sessions has already handed over.
 - **A missing host file** means that host has no rows.
@@ -172,13 +204,20 @@ ingest drops it again; no cutoff state has to be stored. The cap is a constant, 
 ## Testing
 
 Go tests next to the existing ones, using temp directories and no network.
-`CLAUDE_SESSIONS_REMOTE` points push and fetch at a local directory instead of
-`ssh macmini`.
+`CLAUDE_SESSIONS_REMOTE` points push and fetch at a local directory instead of `ssh macmini`:
+push runs `--ingest` in-process against it, and fetch runs `rsync` between two local
+directories.
 
 - Export: full-text extraction follows the existing message rules, and the parse cache is
   reused until the mtime or size changes.
-- Ingest and cap: replacing a host's set, dropping exactly enough of the oldest sessions, always
-  keeping the newest, tie order, a re-pushed dropped session staying dropped, and atomic rewrite.
+- Delta export: only new or changed sessions plus deletions are sent, and `dropped` sessions are
+  skipped until their mtime changes.
+- Ingest: merging a delta, replacing on `full`, exit 3 with nothing changed on a base mismatch or
+  missing manifest, the returned manifest equals what is stored, and atomic rewrite.
+- Cap: dropping exactly enough of the oldest sessions, always keeping the newest, tie order, a
+  dropped session staying dropped and not re-sent, and a dropped session with new activity
+  returning.
+- Push: a full resend after exit 3 or with no `pushed.json`.
 - Push debounce: a pending mark set during a push causes one more round, and a second invocation
   exits while the lock is held.
 - Reader: this host's rows are dropped, merge order is by mtime, the cursor stays on the same ID
