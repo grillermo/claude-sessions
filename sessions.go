@@ -261,6 +261,7 @@ type transcript struct {
 	id      string
 	dir     string
 	mtime   time.Time
+	size    int64
 	account account
 }
 
@@ -292,6 +293,7 @@ func listTranscripts(sources []source, limit int, within scope) ([]transcript, e
 				id:      strings.TrimSuffix(name, ".jsonl"),
 				dir:     filepath.Base(filepath.Dir(path)),
 				mtime:   info.ModTime(),
+				size:    info.Size(),
 				account: src.account,
 			})
 		}
