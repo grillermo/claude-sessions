@@ -22,10 +22,11 @@ arrive a moment after launch.
   "first + last + prompts capped at 4 KB" choice. Measured on 2026-10-26: about 9 MB of prose across
   the three hosts (immunemac 5.4 MB, macmini 3.1 MB, pc 0.6 MB) out of 846 MB of raw transcripts,
   so it all fits in memory and plain substring search is enough.
-- **Cap: the newest 5 GB of history; oldest sessions dropped first.** Raised from 1000 MB at the user's request ("increase it to 5GB"). User: "when the cap is
-  reached, enough old conversations should be dropped to make space for new ones." It's a rolling
-  window, measured on raw transcript bytes across all hosts (846 MB today, so nothing is dropped
-  yet). Dropping only removes sessions from the shared index on the macmini; transcripts on disk
+- **Cap: the newest 5 GB of history; oldest sessions dropped first.** Raised from 1000 MB; user:
+  "increase it to 5GB". User: "when the cap is reached, enough old conversations should be dropped
+  to make space for new ones." It's a rolling window, measured on raw transcript bytes across all
+  hosts (846 MB today, so nothing is dropped yet). At about 1% prose, a full window holds roughly
+  50 MB of searchable text, which still fits in memory. Dropping only removes sessions from the shared index on the macmini; transcripts on disk
   are never deleted. The user approved these defaults with the design.
 - **Subagent transcripts are not indexed.** Their output already returns to the parent session.
 - **Resume of a row from another machine: `ssh -t` to that host.** That host has the working tree,
