@@ -22,7 +22,7 @@ arrive a moment after launch.
   "first + last + prompts capped at 4 KB" choice. Measured on 2026-10-26: about 9 MB of prose across
   the three hosts (immunemac 5.4 MB, macmini 3.1 MB, pc 0.6 MB) out of 846 MB of raw transcripts,
   so it all fits in memory and plain substring search is enough.
-- **Cap: the newest 1000 MB of history; oldest sessions dropped first.** User: "when the cap is
+- **Cap: the newest 5 GB of history; oldest sessions dropped first.** Raised from 1000 MB at the user's request ("increase it to 5GB"). User: "when the cap is
   reached, enough old conversations should be dropped to make space for new ones." It's a rolling
   window, measured on raw transcript bytes across all hosts (846 MB today, so nothing is dropped
   yet). Dropping only removes sessions from the shared index on the macmini; transcripts on disk
@@ -108,7 +108,7 @@ A host's index is JSON lines, one record per session:
 
 Every ingest rebuilds the full set of sessions across all hosts, sorts it newest first by mtime
 (ties broken by `(host, id)`), adds up `bytes`, and keeps sessions until the next one would push
-the total over 1000 MB (1000 × 1024 × 1024 bytes). It drops every older session. Nothing more is
+the total over 5 GB (5 × 1024 × 1024 × 1024 bytes). It drops every older session. Nothing more is
 dropped than needed. A dropped session that a host pushes again is still the oldest, so the same
 ingest drops it again; no cutoff state has to be stored. The cap is a constant, overridable with
 `CLAUDE_SESSIONS_CAP_MB` for tests.
