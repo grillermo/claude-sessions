@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,13 @@ func swapHome(t *testing.T, registry string, accounts map[string]string) string 
 
 	write(filepath.Join(home, ".claude"), "unmanaged", "/Users/me/proj", 4*time.Hour)
 	age := 3 * time.Hour
-	for dir, id := range accounts {
+	dirs := make([]string, 0, len(accounts))
+	for dir := range accounts {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		id := accounts[dir]
 		write(filepath.Join(home, swapDir, "sessions", dir), id, "/Users/me/proj", age)
 		age -= time.Hour
 	}
