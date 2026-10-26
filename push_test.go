@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,5 +200,27 @@ func TestAHungSSHIsCutOff(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("took %v to give up", elapsed)
+	}
+}
+
+func TestTheIndexHostIngestsInProcessWhateverItsCase(t *testing.T) {
+	log := fakeSSH(t, "exit 99\n")
+	t.Setenv("CLAUDE_SESSIONS_HOST", "macmini")
+	t.Setenv("CLAUDE_SESSIONS_INDEX_HOST", "Macmini")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var delta bytes.Buffer
+	if err := writeDelta(&delta, []Record{{ID: "s1", MTime: time.Now(), Bytes: 1, Text: "hi"}}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingestAt("macmini", &delta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Error("ssh ran for the index host itself")
+	}
+	st := store{filepath.Join(home, ".cache", "claude-sessions", "hosts")}
+	if _, err := os.Stat(st.recordsPath("macmini")); err != nil {
+		t.Errorf("nothing stored in this machine's index: %v", err)
 	}
 }

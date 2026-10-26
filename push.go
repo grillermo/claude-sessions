@@ -126,7 +126,7 @@ func ingestAt(host string, delta io.Reader) (manifest, error) {
 	if dir := os.Getenv("CLAUDE_SESSIONS_REMOTE"); dir != "" {
 		return store{dir}.ingest(host, delta, capBytes())
 	}
-	if host == indexHost() {
+	if strings.ToLower(host) == strings.ToLower(indexHost()) {
 		cache, err := cacheDir()
 		if err != nil {
 			return nil, err
