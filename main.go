@@ -30,7 +30,7 @@ const (
 	columnGap    = 3
 )
 
-// selectionBg is saturated rather than a dim grey so the selected row stands
+// selectionBg is saturated rather than a dim grey so the selected path stands
 // out on both light and dark terminal themes.
 var selectionBg = lipgloss.Color("62")
 
@@ -44,11 +44,11 @@ var (
 	accountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	hostStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 
-	// Every selected style shares the background: segments are rendered one
-	// after another, so each has to paint its own stretch of the row.
-	selectedRow     = lipgloss.NewStyle().Background(selectionBg)
+	// Only the selected row's path is painted; the rest of the row keeps the
+	// terminal background and just brightens its text.
+	selectedRow     = lipgloss.NewStyle()
 	selectedBar     = selectedRow.Foreground(lipgloss.Color("213")).Bold(true)
-	selectedPath    = selectedRow.Foreground(lipgloss.Color("231")).Bold(true)
+	selectedPath    = selectedRow.Background(selectionBg).Foreground(lipgloss.Color("231")).Bold(true)
 	selectedAge     = selectedRow.Foreground(lipgloss.Color("189"))
 	selectedFirst   = selectedRow.Foreground(lipgloss.Color("231"))
 	selectedLast    = selectedRow.Foreground(lipgloss.Color("252"))
@@ -529,8 +529,7 @@ type segment struct {
 }
 
 // renderRow draws one session: a header line, then the first and last messages
-// side by side. A selected row is filled to the edge of the screen with the
-// selection background, so the whole block reads as one highlighted entry.
+// side by side. A selected row marks itself with the bar and a purple path.
 func (m model) renderRow(s Session, selected bool) string {
 	// The selection bar and the gap between columns eat into the text width.
 	bodyWidth := m.width - 2
@@ -592,8 +591,7 @@ func (m model) headerSegments(s Session, width int, selected bool) []segment {
 		segment{timeAgo(m.now.Sub(s.MTime)), ageStyle, selectedAge})
 }
 
-// renderLine styles one line's segments and pads it to the full screen width,
-// which is what carries the selection background across the row.
+// renderLine styles one line's segments and pads it to the full screen width.
 func (m model) renderLine(selected bool, segments ...segment) string {
 	var b strings.Builder
 	width := 0

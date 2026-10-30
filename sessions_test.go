@@ -335,22 +335,24 @@ func TestSelectedRowIsFilledToTheScreenWidth(t *testing.T) {
 	}
 }
 
-// Segments are rendered one after another, so a selected style that forgets
-// the background would punch a hole in the highlighted row.
-func TestEverySelectedStyleCarriesTheSelectionBackground(t *testing.T) {
-	styles := map[string]lipgloss.Style{
+// Only the path is purple: any other selected style with a background would
+// paint a block over the row.
+func TestOnlyTheSelectedPathCarriesTheSelectionBackground(t *testing.T) {
+	if selectedPath.GetBackground() != selectionBg {
+		t.Errorf("selected path background = %v, want %v", selectedPath.GetBackground(), selectionBg)
+	}
+	others := map[string]lipgloss.Style{
 		"row":     selectedRow,
 		"bar":     selectedBar,
-		"path":    selectedPath,
 		"age":     selectedAge,
 		"first":   selectedFirst,
 		"last":    selectedLast,
 		"account": selectedAccount,
 		"host":    selectedHost,
 	}
-	for name, style := range styles {
-		if style.GetBackground() != selectionBg {
-			t.Errorf("selected %s style background = %v, want %v", name, style.GetBackground(), selectionBg)
+	for name, style := range others {
+		if style.GetBackground() != (lipgloss.NoColor{}) {
+			t.Errorf("selected %s style has background %v, want none", name, style.GetBackground())
 		}
 	}
 }
