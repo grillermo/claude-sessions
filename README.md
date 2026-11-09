@@ -119,6 +119,33 @@ The index covers the newest 5 GB of transcripts across all machines. Past
 that, the oldest sessions drop out of the index to make room; their transcripts
 stay on disk.
 
+## Headless search
+
+For scripts and agents, which cannot drive the TUI, two subcommands print
+instead of drawing:
+
+```sh
+claude-sessions --search [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] WORD...
+claude-sessions --show [--host NAME] [--json] ID
+```
+
+`--search` looks through the same sessions the list holds — every account
+here and every machine in the index — and prints those holding every word,
+case-insensitively, newest first (20 unless `--limit` says otherwise; `0` for
+all). Each result gives the session ID, machine, account, date, directory,
+first and last message, up to three snippets around the matches, and the
+command that resumes it on its machine. `--json` prints one JSON object per
+session instead, without the full text. It refreshes the mirror first for up
+to 20 seconds (`--no-sync` skips that) and says so on stderr when it could
+not. Inside Claude Code it leaves out the session running the search
+(`CLAUDE_CODE_SESSION_ID`); `--include-current` keeps it.
+
+`--show` prints one session's prose, each block under `## user` or
+`## assistant`; a unique prefix of the ID is enough. Another machine's
+session is read on that machine over ssh. When it cannot be reached, the
+index's copy is printed instead, which has the same prose without saying who
+wrote what.
+
 ## Running it
 
 The `claude-sessions` script builds the binary into `bin/` on first run and

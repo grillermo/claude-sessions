@@ -98,6 +98,11 @@ func (r remoteSource) syncedAt() time.Time {
 // that a harder death left behind are removed before the next sync, since
 // --delete never touches files the filter excludes.
 func (r remoteSource) sync() error {
+	return r.syncWithin(fetchTimeout)
+}
+
+// syncWithin is sync with its own time limit.
+func (r remoteSource) syncWithin(timeout time.Duration) error {
 	if err := os.MkdirAll(r.dir, 0o755); err != nil {
 		return err
 	}
@@ -105,7 +110,7 @@ func (r remoteSource) sync() error {
 	for _, path := range leftovers {
 		os.Remove(path)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rsync", "-az", "--delete",
 		"--include=*.jsonl", "--exclude=*",

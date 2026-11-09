@@ -26,6 +26,10 @@ func runCommand(args []string) (exit int, handled bool) {
 	case "--push":
 		runPush()
 		return 0, true
+	case "--search":
+		return runSearch(args[1:], os.Stdout, os.Stderr), true
+	case "--show":
+		return runShow(args[1:], os.Stdout, os.Stderr), true
 	}
 	return 0, false
 }
