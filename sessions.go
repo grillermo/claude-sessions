@@ -225,7 +225,9 @@ func readSession(transcript string) (first, last, cwd, text string, err error) {
 // belonging to a claude-swap account is resumed through `cswap run`, which
 // points Claude at that account's configuration and credentials for this
 // terminal only: plain `claude --resume` would look for the transcript under
-// whichever account happens to be current and not find it.
+// whichever account happens to be current and not find it. A session in
+// claude-swap's shared history (see discoverSources) has no account, and plain
+// claude finds it from any of them.
 func resumeCommand(s Session) string {
 	launch := fmt.Sprintf("claude --resume %s", shellQuote(s.ConvID))
 	if s.Account.number != 0 {

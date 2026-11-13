@@ -197,3 +197,43 @@ func TestALocalSessionResumesThroughTheShell(t *testing.T) {
 		t.Errorf("argv = %q", got)
 	}
 }
+
+// TestSharedHistoryIsReadOnce: claude-swap shares chat history by linking an
+// account's projects/ to ~/.claude/projects. Such an account adds no source of
+// its own, so each session is listed once, as the unmanaged one it now is,
+// while an account that still keeps its own history is read as before.
+func TestSharedHistoryIsReadOnce(t *testing.T) {
+	home := swapHome(t, twoAccounts, map[string]string{
+		"2-me_home.com": "home",
+	})
+	shared := filepath.Join(home, swapDir, "sessions", "1-me_work.com")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".claude", "projects"), filepath.Join(shared, "projects")); err != nil {
+		t.Fatal(err)
+	}
+
+	sources := discoverSources(home)
+	if len(sources) != 2 {
+		t.Fatalf("got %d sources, want ~/.claude and the account with its own history: %v", len(sources), sources)
+	}
+	sessions, err := latestSessions(sources, 20, scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]account{}
+	for _, s := range sessions {
+		if _, dup := got[s.ConvID]; dup {
+			t.Fatalf("session %s listed twice", s.ConvID)
+		}
+		got[s.ConvID] = s.Account
+	}
+	want := map[string]account{
+		"unmanaged": {},
+		"home":      {number: 2, email: "me@home.com"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sessions = %v, want %v", got, want)
+	}
+}

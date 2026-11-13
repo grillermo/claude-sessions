@@ -29,6 +29,13 @@ accounts' sessions do not exist. The list reads all of them — every
 `~/.claude/projects` that predates the swapping — and merges them into one
 timeline, newest first, rather than a run of each account.
 
+Since claude-swap 1.0, accounts share one chat history by default: an account's
+`projects` becomes a link to `~/.claude/projects`, and the history it kept on
+its own is merged in on its next launch. Such an account is not read a second
+time, and its sessions show up unlabelled, since any account can resume them.
+An account that still keeps its own history (an older claude-swap, or
+`run.shareHistory false`) is read and labelled as before.
+
 A row belonging to an account is labelled with its address next to the project
 path, and the filter matches that too, so `/work.com` narrows the list to one
 account. Rows with no label are the unmanaged `~/.claude`.
@@ -69,7 +76,8 @@ A session belonging to a claude-swap account is resumed through
 `cswap run <slot> -- --resume <id>` instead, which points Claude at that
 account's configuration and credentials for that terminal only. Plain
 `claude --resume` would look for the transcript under whichever account is
-current and not find it.
+current and not find it. Sessions in the shared history carry no account, so
+they resume with plain `claude --resume`.
 
 ## Staying in the session's directory
 
