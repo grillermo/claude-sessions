@@ -52,11 +52,26 @@ on the right. Rows are three lines tall, so a screenful holds many sessions.
 | `↑` `↓` (`k` `j`) | move between sessions |
 | `tab` | switch to the full-screen preview and back |
 | `enter` | resume the selected session in this terminal |
+| `←` | in the preview: start a new session about the selected one |
 | `/` | filter as you type; `esc` leaves the filter |
 | `q` | quit |
 
 Filtering matches the first message, the last message, and the project path.
 It stays live behind the preview, so you can narrow and read without leaving.
+
+## Referring to a session
+
+`←` in the preview starts a new Claude session in the directory you launched
+`claude-sessions` from, with its prompt box already holding
+
+```
+/search-sessions with id <session ID> on the <machine>
+```
+
+It is not sent: type what you want from that session after it (`read the
+whole conversation, then…`) and press enter. The `search-sessions` skill
+looks the session up by that ID with `--search --id` and reads it with
+`--show`. The prompt is passed with Claude Code's `--prefill` option.
 
 ## What counts as a message
 
@@ -133,7 +148,7 @@ For scripts and agents, which cannot drive the TUI, two subcommands print
 instead of drawing:
 
 ```sh
-claude-sessions --search [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] WORD...
+claude-sessions --search [--id ID] [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] [WORD...]
 claude-sessions --show [--host NAME] [--json] ID
 ```
 
@@ -142,7 +157,10 @@ here and every machine in the index — and prints those holding every word,
 case-insensitively, newest first (20 unless `--limit` says otherwise; `0` for
 all). Each result gives the session ID, machine, account, date, directory,
 first and last message, up to three snippets around the matches, and the
-command that resumes it on its machine. `--json` prints one JSON object per
+command that resumes it on its machine. `--id` keeps only the session with
+that ID, or the one whose ID starts with it; words then become optional, the
+running session is not left out, and it exits 1 when there is no such
+session. `--json` prints one JSON object per
 session instead, without the full text. It refreshes the mirror first for up
 to 20 seconds (`--no-sync` skips that) and says so on stderr when it could
 not. Inside Claude Code it leaves out the session running the search

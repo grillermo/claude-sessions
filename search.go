@@ -2,7 +2,7 @@
 // machine and every other machine from the shared index, searched and printed
 // as plain text or JSON lines, for scripts and agents that cannot drive a TUI.
 //
-//	claude-sessions --search [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] WORD...
+//	claude-sessions --search [--id ID] [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] [WORD...]
 //	claude-sessions --show [--host NAME] [--json] ID
 package main
 
@@ -65,6 +65,7 @@ type searchOptions struct {
 	host    string // "" for every machine
 	limit   int
 	exclude string // a session ID to leave out: the one running the search
+	id      string // only the session with this ID, or whose ID starts with it
 }
 
 // searchRecords returns the records holding every term, case-insensitively,
@@ -80,6 +81,9 @@ func searchRecords(records []Record, self string, opt searchOptions) []hit {
 	var hits []hit
 	for _, r := range records {
 		if r.ID == opt.exclude {
+			continue
+		}
+		if opt.id != "" && !strings.HasPrefix(r.ID, opt.id) {
 			continue
 		}
 		if opt.host != "" && !strings.EqualFold(r.Host, opt.host) {
@@ -231,12 +235,17 @@ func runSearch(args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "print JSON lines")
 	noSync := fs.Bool("no-sync", false, "do not refresh the other machines' sessions first")
 	withSelf := fs.Bool("include-current", false, "keep the session running this search")
+	id := fs.String("id", "", "only the session with this ID, or a unique prefix of it")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: claude-sessions --search [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] WORD...")
+		fmt.Fprintln(stderr, "usage: claude-sessions --search [--id ID] [--in DIR] [--host NAME] [--limit N] [--json] [--no-sync] [WORD...]")
 		fs.PrintDefaults()
 	}
 	terms, err := parseInterspersed(fs, args)
 	if err != nil {
+		return 2
+	}
+	if len(terms) == 0 && *id == "" {
+		fs.Usage()
 		return 2
 	}
 	within, err := newScope(*in)
@@ -249,8 +258,9 @@ func runSearch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "claude-sessions:", err)
 		return 1
 	}
-	opt := searchOptions{terms: terms, within: within, host: strings.ToLower(*host), limit: *limit}
-	if !*withSelf {
+	opt := searchOptions{terms: terms, within: within, host: strings.ToLower(*host), limit: *limit, id: *id}
+	// Asking for a session by its ID is asking for it, even the current one.
+	if !*withSelf && *id == "" {
 		opt.exclude = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
 	hits := searchRecords(records, self, opt)
@@ -271,8 +281,14 @@ func runSearch(args []string, stdout, stderr io.Writer) int {
 		}
 		writeHit(out, h, now)
 	}
+	if *id != "" && len(hits) > 1 && hits[0].ID != *id {
+		fmt.Fprintf(stderr, "claude-sessions: %d sessions start with %s; give more of the ID\n", len(hits), *id)
+	}
 	if !*asJSON && len(hits) == 0 {
 		fmt.Fprintln(stderr, "claude-sessions: no sessions match")
+	}
+	if *id != "" && len(hits) == 0 {
+		return 1
 	}
 	return 0
 }

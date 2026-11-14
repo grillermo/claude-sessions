@@ -4,7 +4,8 @@
 // the right. Arrow keys move, Tab switches between the list and a full-screen
 // preview of the selection, `/` filters as you type, Esc leaves the filter,
 // Enter replaces this process with `claude --resume` so the session takes over
-// the terminal the TUI was started in, and `q` quits.
+// the terminal the TUI was started in, ← in the preview starts a new session
+// here with a prompt that points at the selected one, and `q` quits.
 package main
 
 import (
@@ -96,6 +97,9 @@ type model struct {
 	remoteSynced time.Time
 	// chosen is the session Enter picked, resumed after the TUI shuts down.
 	chosen *Session
+	// referenced is the session ← picked in the preview: a new session starts
+	// in this directory with a prompt naming it, ready for more words.
+	referenced *Session
 }
 
 func newModel(sessions []Session, within scope) model {
@@ -324,6 +328,9 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// anything, so it is free.
 		m.togglePreview()
 		return m, nil
+	case tea.KeyLeft:
+		// The query has no cursor to move, so ← is free here too.
+		return m.reference()
 	case tea.KeyRunes, tea.KeySpace:
 		// A space arrives as its own key type, but still carries its rune.
 		m.query += string(msg.Runes)
@@ -373,6 +380,21 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chosen = session
 			return m, tea.Quit
 		}
+	case "left":
+		return m.reference()
+	}
+	return m, nil
+}
+
+// reference picks the previewed session for a new Claude session that refers
+// to it. Only the preview does this: in the list, ← stays inert.
+func (m model) reference() (tea.Model, tea.Cmd) {
+	if !m.preview {
+		return m, nil
+	}
+	if session := m.selected(); session != nil {
+		m.referenced = session
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -430,9 +452,9 @@ func (m model) View() string {
 // preview was opened from search mode.
 func (m model) previewFooter() string {
 	if m.searching {
-		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · esc leave search")
+		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · ← new session about it · esc leave search")
 	}
-	return footerStyle.Render("tab list · ↑↓ session · enter resume · q quit")
+	return footerStyle.Render("tab list · ↑↓ session · enter resume · ← new session about it · q quit")
 }
 
 // previewView shows one session on the whole screen: the same two columns as a
@@ -799,7 +821,13 @@ func main() {
 	}
 
 	final, ok := finished.(model)
-	if !ok || final.chosen == nil {
+	if !ok {
+		return
+	}
+	if final.referenced != nil {
+		startReferring(*final.referenced, localHost())
+	}
+	if final.chosen == nil {
 		return
 	}
 
@@ -824,4 +852,30 @@ func main() {
 	}
 	fmt.Fprintln(os.Stderr, "claude-sessions: could not resume:", err)
 	os.Exit(1)
+}
+
+// startReferring replaces this process with a new Claude session in the
+// directory the TUI was started from, its prompt box holding a request to
+// read the referenced session, unsent, so more can be typed after it.
+func startReferring(s Session, self string) {
+	argv := []string{"claude", "--prefill", referencePrompt(s, self)}
+	path, err := exec.LookPath(argv[0])
+	if err == nil {
+		err = syscall.Exec(path, argv, os.Environ())
+	}
+	fmt.Fprintln(os.Stderr, "claude-sessions: could not start claude:", err)
+	os.Exit(1)
+}
+
+// referencePrompt is the prompt that points a new session at another one, by
+// its ID and the machine it ran on. It ends in a space, ready for more words.
+func referencePrompt(s Session, self string) string {
+	host := s.Host
+	if host == "" {
+		host = self
+	}
+	if strings.EqualFold(host, "pc") {
+		host = "PC"
+	}
+	return fmt.Sprintf("/search-sessions with id %s on the %s ", s.ConvID, host)
 }

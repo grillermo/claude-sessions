@@ -556,3 +556,34 @@ func TestFilterMatchesTheMiddleOfASession(t *testing.T) {
 		t.Errorf("a phrase from the middle matched %d sessions, want 1", len(m.filtered))
 	}
 }
+
+func TestLeftInThePreviewReferencesTheSession(t *testing.T) {
+	if m := press(t, previewModel(), tea.KeyMsg{Type: tea.KeyLeft}); m.referenced != nil {
+		t.Error("left in the list picked a session")
+	}
+	m := press(t, press(t, previewModel(), key("tab")), tea.KeyMsg{Type: tea.KeyLeft})
+	if m.referenced == nil || m.referenced.ConvID != "1" || m.chosen != nil {
+		t.Fatalf("referenced = %v, chosen = %v", m.referenced, m.chosen)
+	}
+
+	// While filtering, the query has no cursor, so left still references.
+	m = press(t, press(t, press(t, previewModel(), key("/")), key("tab")), tea.KeyMsg{Type: tea.KeyLeft})
+	if m.referenced == nil {
+		t.Error("left in the preview while filtering did nothing")
+	}
+}
+
+func TestReferencePromptNamesTheSessionAndItsMachine(t *testing.T) {
+	cases := []struct {
+		host, want string
+	}{
+		{"pc", "/search-sessions with id abc on the PC "},
+		{"macmini", "/search-sessions with id abc on the macmini "},
+		{"", "/search-sessions with id abc on the immunemac "},
+	}
+	for _, c := range cases {
+		if got := referencePrompt(Session{ConvID: "abc", Host: c.host}, "immunemac"); got != c.want {
+			t.Errorf("host %q: got %q, want %q", c.host, got, c.want)
+		}
+	}
+}

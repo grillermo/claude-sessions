@@ -147,3 +147,36 @@ func TestSnippetCutsAroundTheMatch(t *testing.T) {
 		t.Errorf("snippet = %q", got)
 	}
 }
+
+func TestSearchByIDFindsOneSessionOnAnyMachine(t *testing.T) {
+	searchHome(t)
+	// The session running the search is still found when asked for by ID.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "remote-1")
+	out, _ := search(t, "--id", "remote")
+	if !strings.Contains(out, "remote-1  pc") || strings.Contains(out, "local-1") {
+		t.Errorf("--id remote:\n%s", out)
+	}
+	if out, _ := search(t, "--id", "local-1", "rotate"); !strings.Contains(out, "local-1  immunemac") {
+		t.Errorf("--id with a word:\n%s", out)
+	}
+	var out2, errOut bytes.Buffer
+	if code := runSearch([]string{"--no-sync", "--id", "remote-1", "--host", "immunemac"}, &out2, &errOut); code != 1 || out2.Len() != 0 {
+		t.Errorf("--id on the wrong host: exit %d\n%s", code, out2.String())
+	}
+}
+
+func TestSearchByAMissingIDFails(t *testing.T) {
+	searchHome(t)
+	var out, errOut bytes.Buffer
+	if code := runSearch([]string{"--no-sync", "--id", "nope"}, &out, &errOut); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+}
+
+func TestSearchNeedsAWordOrAnID(t *testing.T) {
+	searchHome(t)
+	var out, errOut bytes.Buffer
+	if code := runSearch([]string{"--no-sync"}, &out, &errOut); code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+}
