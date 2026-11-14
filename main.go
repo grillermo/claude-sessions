@@ -4,7 +4,7 @@
 // the right. Arrow keys move, Tab switches between the list and a full-screen
 // preview of the selection, `/` filters as you type, Esc leaves the filter,
 // Enter replaces this process with `claude --resume` so the session takes over
-// the terminal the TUI was started in, ← in the preview starts a new session
+// the terminal the TUI was started in, → in the preview starts a new session
 // here with a prompt that points at the selected one, and `q` quits.
 package main
 
@@ -97,7 +97,7 @@ type model struct {
 	remoteSynced time.Time
 	// chosen is the session Enter picked, resumed after the TUI shuts down.
 	chosen *Session
-	// referenced is the session ← picked in the preview: a new session starts
+	// referenced is the session → picked in the preview: a new session starts
 	// in this directory with a prompt naming it, ready for more words.
 	referenced *Session
 }
@@ -328,8 +328,8 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// anything, so it is free.
 		m.togglePreview()
 		return m, nil
-	case tea.KeyLeft:
-		// The query has no cursor to move, so ← is free here too.
+	case tea.KeyRight:
+		// The query has no cursor to move, so → is free here too.
 		return m.reference()
 	case tea.KeyRunes, tea.KeySpace:
 		// A space arrives as its own key type, but still carries its rune.
@@ -380,14 +380,14 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chosen = session
 			return m, tea.Quit
 		}
-	case "left":
+	case "right":
 		return m.reference()
 	}
 	return m, nil
 }
 
 // reference picks the previewed session for a new Claude session that refers
-// to it. Only the preview does this: in the list, ← stays inert.
+// to it. Only the preview does this: in the list, → stays inert.
 func (m model) reference() (tea.Model, tea.Cmd) {
 	if !m.preview {
 		return m, nil
@@ -452,9 +452,9 @@ func (m model) View() string {
 // preview was opened from search mode.
 func (m model) previewFooter() string {
 	if m.searching {
-		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · ← new session about it · esc leave search")
+		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · → new session about it · esc leave search")
 	}
-	return footerStyle.Render("tab list · ↑↓ session · enter resume · ← new session about it · q quit")
+	return footerStyle.Render("tab list · ↑↓ session · enter resume · → new session about it · q quit")
 }
 
 // previewView shows one session on the whole screen: the same two columns as a

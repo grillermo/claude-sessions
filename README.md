@@ -52,7 +52,7 @@ on the right. Rows are three lines tall, so a screenful holds many sessions.
 | `↑` `↓` (`k` `j`) | move between sessions |
 | `tab` | switch to the full-screen preview and back |
 | `enter` | resume the selected session in this terminal |
-| `←` | in the preview: start a new session about the selected one |
+| `→` | in the preview: start a new session about the selected one |
 | `/` | filter as you type; `esc` leaves the filter |
 | `q` | quit |
 
@@ -61,7 +61,7 @@ It stays live behind the preview, so you can narrow and read without leaving.
 
 ## Referring to a session
 
-`←` in the preview starts a new Claude session in the directory you launched
+`→` in the preview starts a new Claude session in the directory you launched
 `claude-sessions` from, with its prompt box already holding
 
 ```

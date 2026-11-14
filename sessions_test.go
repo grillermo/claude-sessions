@@ -557,19 +557,19 @@ func TestFilterMatchesTheMiddleOfASession(t *testing.T) {
 	}
 }
 
-func TestLeftInThePreviewReferencesTheSession(t *testing.T) {
-	if m := press(t, previewModel(), tea.KeyMsg{Type: tea.KeyLeft}); m.referenced != nil {
-		t.Error("left in the list picked a session")
+func TestRightInThePreviewReferencesTheSession(t *testing.T) {
+	if m := press(t, previewModel(), tea.KeyMsg{Type: tea.KeyRight}); m.referenced != nil {
+		t.Error("right in the list picked a session")
 	}
-	m := press(t, press(t, previewModel(), key("tab")), tea.KeyMsg{Type: tea.KeyLeft})
+	m := press(t, press(t, previewModel(), key("tab")), tea.KeyMsg{Type: tea.KeyRight})
 	if m.referenced == nil || m.referenced.ConvID != "1" || m.chosen != nil {
 		t.Fatalf("referenced = %v, chosen = %v", m.referenced, m.chosen)
 	}
 
-	// While filtering, the query has no cursor, so left still references.
-	m = press(t, press(t, press(t, previewModel(), key("/")), key("tab")), tea.KeyMsg{Type: tea.KeyLeft})
+	// While filtering, the query has no cursor, so right still references.
+	m = press(t, press(t, press(t, previewModel(), key("/")), key("tab")), tea.KeyMsg{Type: tea.KeyRight})
 	if m.referenced == nil {
-		t.Error("left in the preview while filtering did nothing")
+		t.Error("right in the preview while filtering did nothing")
 	}
 }
 
