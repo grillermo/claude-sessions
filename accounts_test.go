@@ -237,3 +237,28 @@ func TestSharedHistoryIsReadOnce(t *testing.T) {
 		t.Fatalf("sessions = %v, want %v", got, want)
 	}
 }
+
+func TestResumingAsAnotherAccountNamesItByAddress(t *testing.T) {
+	as := account{number: 3, email: "me@home.com"}
+	local := Session{ConvID: "abc", Cwd: "/tmp/proj", Account: account{number: 1, email: "me@work.com"}}
+	want := []string{"/bin/zsh", "-c", `cd '/tmp/proj' && cswap run 'me@home.com' -- --resume 'abc'`}
+	if got := resumeAsArgv(local, as, "/bin/zsh"); !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q", got)
+	}
+
+	remote := Session{ConvID: "abc", Cwd: "/home/me/proj", Host: "pc"}
+	inner := `cd '/home/me/proj' && cswap run 'me@home.com' -- --resume 'abc'`
+	want = []string{"ssh", "-t", "--", "pc", `exec "$SHELL" -lic ` + shellQuote(inner)}
+	if got := resumeAsArgv(remote, as, "/bin/zsh"); !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q", got)
+	}
+}
+
+func TestSwapAccountsListsTheRegistryInSlotOrder(t *testing.T) {
+	home := swapHome(t, twoAccounts, map[string]string{"1-me_work.com": "work"})
+	accounts, active := swapAccounts(home)
+	want := []account{{number: 1, email: "me@work.com"}, {number: 2, email: "me@home.com"}}
+	if !reflect.DeepEqual(accounts, want) || active != 1 {
+		t.Errorf("accounts = %v, active = %d", accounts, active)
+	}
+}

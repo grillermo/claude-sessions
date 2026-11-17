@@ -587,3 +587,36 @@ func TestReferencePromptNamesTheSessionAndItsMachine(t *testing.T) {
 		}
 	}
 }
+
+func TestLeftInThePreviewPicksTheAccountToResumeAs(t *testing.T) {
+	m := previewModel()
+	m.accounts = []account{{number: 1, email: "me@work.com"}, {number: 2, email: "me@home.com"}}
+	m.activeAccount = 2
+
+	if m := press(t, m, tea.KeyMsg{Type: tea.KeyLeft}); m.picking {
+		t.Error("left in the list opened the account menu")
+	}
+	m = press(t, press(t, m, key("tab")), tea.KeyMsg{Type: tea.KeyLeft})
+	if !m.picking || m.accounts[m.pickCursor].number != 2 {
+		t.Fatalf("picking = %v, highlighted %d, want the default login", m.picking, m.pickCursor)
+	}
+	if view := m.View(); !strings.Contains(view, "resume as") || !strings.Contains(view, "me@work.com") {
+		t.Errorf("menu is not drawn: %q", view)
+	}
+
+	// Esc closes the menu and stays in the preview.
+	if closed := press(t, m, key("esc")); closed.picking || !closed.preview {
+		t.Errorf("esc: picking = %v, preview = %v", closed.picking, closed.preview)
+	}
+
+	m = press(t, press(t, m, tea.KeyMsg{Type: tea.KeyUp}), key("enter"))
+	if m.chosen == nil || m.chosen.ConvID != "1" || m.resumeAs == nil || m.resumeAs.number != 1 {
+		t.Fatalf("chosen = %v, resumeAs = %v", m.chosen, m.resumeAs)
+	}
+}
+
+func TestWithoutAccountsLeftDoesNothing(t *testing.T) {
+	if m := press(t, press(t, previewModel(), key("tab")), tea.KeyMsg{Type: tea.KeyLeft}); m.picking {
+		t.Error("left opened an empty account menu")
+	}
+}

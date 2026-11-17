@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -105,6 +106,27 @@ func resolved(path string) string {
 		return real
 	}
 	return filepath.Clean(path)
+}
+
+// swapAccounts lists every account claude-swap has on record, by slot number,
+// and the number of the one that is the default login (0 when unknown). These
+// are the accounts a session can be resumed as.
+func swapAccounts(home string) ([]account, int) {
+	path := filepath.Join(home, swapDir, "sequence.json")
+	emails := accountEmails(path)
+	accounts := make([]account, 0, len(emails))
+	for number, email := range emails {
+		accounts = append(accounts, account{number: number, email: email})
+	}
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].number < accounts[j].number })
+
+	var registry struct {
+		Active int `json:"activeAccountNumber"`
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &registry)
+	}
+	return accounts, registry.Active
 }
 
 // accountEmails reads the addresses claude-swap has on record, keyed by slot

@@ -53,11 +53,22 @@ on the right. Rows are three lines tall, so a screenful holds many sessions.
 | `tab` | switch to the full-screen preview and back |
 | `enter` | resume the selected session in this terminal |
 | `→` | in the preview: start a new session about the selected one |
+| `←` | in the preview: pick a claude-swap account to resume the session as |
 | `/` | filter as you type; `esc` leaves the filter |
 | `q` | quit |
 
 Filtering matches the first message, the last message, and the project path.
 It stays live behind the preview, so you can narrow and read without leaving.
+
+## Resuming as another account
+
+`←` in the preview opens a menu of the accounts in claude-swap's registry,
+starting on the session's own account, or on the default login. `enter`
+resumes the session as the highlighted one with `cswap run <email> -- --resume
+<id>`, on the session's machine when it ran on another one; `esc` closes the
+menu. The account is named by its address because slot numbers can differ
+between machines. Its chat history has to hold the transcript, which it does
+when claude-swap shares history between accounts, as it does by default.
 
 ## Referring to a session
 

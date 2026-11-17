@@ -236,6 +236,15 @@ func resumeCommand(s Session) string {
 	return fmt.Sprintf("cd %s && %s", shellQuote(s.Cwd), launch)
 }
 
+// resumeAsCommand resumes a session as an account picked by hand rather than
+// the one it was listed under. The account goes to `cswap run` by its address,
+// which cswap resolves on whichever machine runs it, so it still names the
+// right account on another machine whose slot numbers differ from this one's.
+func resumeAsCommand(s Session, as account) string {
+	return fmt.Sprintf("cd %s && cswap run %s -- --resume %s",
+		shellQuote(s.Cwd), shellQuote(as.email), shellQuote(s.ConvID))
+}
+
 // resumeArgv is the program and arguments that resume a session. A session
 // from another machine resumes on that machine, over ssh with a terminal,
 // through its login shell so its PATH finds claude and cswap; that machine has
@@ -244,10 +253,21 @@ func resumeCommand(s Session) string {
 // an ssh option; the remote command quotes the cwd and ID twice, once for the
 // shell ssh runs and once for the login shell.
 func resumeArgv(s Session, shell string) []string {
+	return runArgv(s, shell, resumeCommand(s))
+}
+
+// resumeAsArgv is resumeArgv with the session resumed as the given account.
+func resumeAsArgv(s Session, as account, shell string) []string {
+	return runArgv(s, shell, resumeAsCommand(s, as))
+}
+
+// runArgv runs a resume command where the session lives: here through the
+// shell, or on its machine over ssh.
+func runArgv(s Session, shell, command string) []string {
 	if s.Host != "" {
-		return []string{"ssh", "-t", "--", s.Host, `exec "$SHELL" -lic ` + shellQuote(resumeCommand(s))}
+		return []string{"ssh", "-t", "--", s.Host, `exec "$SHELL" -lic ` + shellQuote(command)}
 	}
-	return []string{shell, "-c", resumeCommand(s)}
+	return []string{shell, "-c", command}
 }
 
 // cwdFileEnv names the file a wrapping shell function asks us to write the

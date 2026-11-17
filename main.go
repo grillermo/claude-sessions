@@ -5,7 +5,8 @@
 // preview of the selection, `/` filters as you type, Esc leaves the filter,
 // Enter replaces this process with `claude --resume` so the session takes over
 // the terminal the TUI was started in, → in the preview starts a new session
-// here with a prompt that points at the selected one, and `q` quits.
+// here with a prompt that points at the selected one, ← in the preview opens a
+// menu of claude-swap accounts to resume it as, and `q` quits.
 package main
 
 import (
@@ -100,6 +101,17 @@ type model struct {
 	// referenced is the session → picked in the preview: a new session starts
 	// in this directory with a prompt naming it, ready for more words.
 	referenced *Session
+	// accounts are claude-swap's accounts, offered by ← in the preview to
+	// resume the session as; activeAccount is the default login's number.
+	accounts      []account
+	activeAccount int
+	// picking is the account menu being open over the preview, pickCursor the
+	// account highlighted in it.
+	picking    bool
+	pickCursor int
+	// resumeAs is the account the menu picked for chosen, nil to resume it the
+	// usual way.
+	resumeAs *account
 }
 
 func newModel(sessions []Session, within scope) model {
@@ -285,6 +297,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.picking {
+			return m.updatePicker(msg)
+		}
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -329,8 +344,11 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.togglePreview()
 		return m, nil
 	case tea.KeyRight:
-		// The query has no cursor to move, so → is free here too.
+		// The query has no cursor to move, so → and ← are free here too.
 		return m.reference()
+	case tea.KeyLeft:
+		m.openPicker()
+		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
 		// A space arrives as its own key type, but still carries its rune.
 		m.query += string(msg.Runes)
@@ -382,6 +400,51 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "right":
 		return m.reference()
+	case "left":
+		m.openPicker()
+	}
+	return m, nil
+}
+
+// openPicker opens the account menu over the preview. Only the preview does
+// this, and only when claude-swap has accounts to offer. The highlight starts
+// on the session's own account, or else on the default login.
+func (m *model) openPicker() {
+	session := m.selected()
+	if !m.preview || session == nil || len(m.accounts) == 0 {
+		return
+	}
+	m.picking = true
+	m.pickCursor = 0
+	start := session.Account.number
+	if start == 0 {
+		start = m.activeAccount
+	}
+	for i, a := range m.accounts {
+		if a.number == start {
+			m.pickCursor = i
+		}
+	}
+}
+
+// updatePicker handles keys while the account menu is open: ↑↓ pick, Enter
+// resumes the session as the highlighted account, Esc or ← closes the menu.
+func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "left", "q":
+		m.picking = false
+	case "up", "k":
+		m.pickCursor = max(m.pickCursor-1, 0)
+	case "down", "j":
+		m.pickCursor = min(m.pickCursor+1, len(m.accounts)-1)
+	case "enter":
+		if session := m.selected(); session != nil {
+			as := m.accounts[m.pickCursor]
+			m.chosen, m.resumeAs = session, &as
+			return m, tea.Quit
+		}
 	}
 	return m, nil
 }
@@ -452,9 +515,34 @@ func (m model) View() string {
 // preview was opened from search mode.
 func (m model) previewFooter() string {
 	if m.searching {
-		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · → new session about it · esc leave search")
+		return footerStyle.Render("type to filter · tab list · ↑↓ session · enter resume · ← resume as… · → new session about it · esc leave search")
 	}
-	return footerStyle.Render("tab list · ↑↓ session · enter resume · → new session about it · q quit")
+	return footerStyle.Render("tab list · ↑↓ session · enter resume · ← resume as… · → new session about it · q quit")
+}
+
+// pickerLines is the account menu drawn under the preview: a heading, then one
+// line per account, the session's own and the default login marked.
+func (m model) pickerLines(s Session) []string {
+	lines := []string{labelStyle.Render("resume as")}
+	for i, a := range m.accounts {
+		text := fmt.Sprintf("%d  %s", a.number, a.email)
+		var marks []string
+		if a.number == s.Account.number {
+			marks = append(marks, "this session's")
+		}
+		if a.number == m.activeAccount {
+			marks = append(marks, "default login")
+		}
+		if len(marks) > 0 {
+			text += "  (" + strings.Join(marks, ", ") + ")"
+		}
+		if i == m.pickCursor {
+			lines = append(lines, selectedBar.Render("▌ ")+selectedPath.Render(text))
+		} else {
+			lines = append(lines, "  "+accountStyle.Render(text))
+		}
+	}
+	return lines
 }
 
 // previewView shows one session on the whole screen: the same two columns as a
@@ -466,6 +554,11 @@ func (m model) previewView(s Session) string {
 	}
 	// The title, the column labels, and the footer.
 	bodyHeight := m.height - 3
+	var picker []string
+	if m.picking {
+		picker = m.pickerLines(s)
+		bodyHeight -= len(picker) + 1
+	}
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -490,6 +583,11 @@ func (m model) previewView(s Session) string {
 	for i := 0; i < bodyHeight; i++ {
 		b.WriteString(firstStyle.Render(pad(left[i], columnWidth)) + gap +
 			lastStyle.Render(right[i]) + "\n")
+	}
+	if m.picking {
+		b.WriteString("\n" + strings.Join(picker, "\n") + "\n")
+		b.WriteString(footerStyle.Render("↑↓ account · enter resume as it · esc back"))
+		return b.String()
 	}
 	b.WriteString(m.previewFooter())
 	return b.String()
@@ -810,6 +908,9 @@ func main() {
 	m := newModel(nil, within)
 	m.pending = pending
 	m.remoteSrc = remote
+	if home, err := os.UserHomeDir(); err == nil {
+		m.accounts, m.activeAccount = swapAccounts(home)
+	}
 	if arg == "" {
 		m.prefillSearch(cwdName())
 	}
@@ -846,6 +947,9 @@ func main() {
 		shell = "/bin/sh"
 	}
 	argv := resumeArgv(*final.chosen, shell)
+	if final.resumeAs != nil {
+		argv = resumeAsArgv(*final.chosen, *final.resumeAs, shell)
+	}
 	path, err := exec.LookPath(argv[0])
 	if err == nil {
 		err = syscall.Exec(path, argv, os.Environ())
